@@ -1,13 +1,16 @@
+mod admin;
 mod commands;
 mod database;
 mod error;
 mod proxy;
+mod services;
 
+use admin::AdminServer;
 use database::{AppSettings, Database};
 use proxy::ProxyServer;
 use std::sync::Arc;
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::{Emitter, Manager};
-use tauri::menu::{Menu, MenuItem, CheckMenuItem, PredefinedMenuItem};
 
 pub use error::AppError;
 
@@ -17,6 +20,7 @@ pub struct AppState {
     pub db: Arc<Database>,
     pub settings: Arc<tokio::sync::RwLock<AppSettings>>,
     pub proxy: Arc<tokio::sync::RwLock<Option<ProxyServer>>>,
+    pub admin: Arc<tokio::sync::RwLock<Option<AdminServer>>>,
     pub failure_counts: Arc<tokio::sync::RwLock<std::collections::HashMap<String, u32>>>,
 }
 
@@ -32,13 +36,18 @@ pub fn run() {
             // Initialize database
             let db = Database::open()?;
             db.create_tables()?;
-            let settings_cache = db.get_settings().unwrap_or_default();
+            let mut settings_cache = db.get_settings().unwrap_or_default();
+            admin::apply_admin_env(&mut settings_cache);
+            db.update_settings(&settings_cache)?;
 
             let state = AppState {
                 db: Arc::new(db),
                 settings: Arc::new(tokio::sync::RwLock::new(settings_cache)),
                 proxy: Arc::new(tokio::sync::RwLock::new(None)),
-                failure_counts: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+                admin: Arc::new(tokio::sync::RwLock::new(None)),
+                failure_counts: Arc::new(
+                    tokio::sync::RwLock::new(std::collections::HashMap::new()),
+                ),
             };
             app.manage(state);
 
@@ -47,6 +56,10 @@ pub fn run() {
             tauri::async_runtime::block_on(async {
                 let app_state = handle.state::<AppState>();
                 let settings = app_state.settings.read().await.clone();
+                let admin_router = admin::build_combined_router(
+                    &settings,
+                    admin::AdminState::new_runtime(app_state.inner().clone(), handle.clone()),
+                );
                 if settings.proxy_enabled {
                     let port = settings.listen_port;
                     let server = ProxyServer::new(
@@ -56,13 +69,27 @@ pub fn run() {
                         handle.clone(),
                         app_state.failure_counts.clone(),
                     );
-                    if let Err(e) = server.start().await {
+                    if let Err(e) = server.start_with_admin(admin_router).await {
                         log::error!("Failed to auto-start proxy: {e}");
                     } else {
                         let mut proxy_guard = app_state.proxy.write().await;
                         *proxy_guard = Some(server);
                         log::info!("Proxy auto-started on port {port}");
                     }
+                } else if admin_router.is_some() {
+                    log::warn!(
+                        "Web Admin single-port mode requires the proxy server to be running"
+                    );
+                }
+
+                if let Err(e) = admin::start_admin_if_enabled(
+                    app_state.inner().clone(),
+                    handle.clone(),
+                    app_state.admin.clone(),
+                )
+                .await
+                {
+                    log::error!("Failed to auto-start admin server: {e}");
                 }
             });
 
@@ -166,6 +193,7 @@ pub fn run() {
             commands::cli::set_user_env_vars,
             commands::cli::get_cli_data,
             commands::limit::query_limit,
+            commands::admin_cmd::get_admin_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -174,7 +202,8 @@ pub fn run() {
 pub(crate) fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let app_state = app.state::<AppState>();
     let mut entries = app_state
-        .db.get_enabled_entries_for_auto()
+        .db
+        .get_enabled_entries_for_auto()
         .unwrap_or_default();
     let sort_mode = app_state
         .settings
@@ -225,6 +254,17 @@ pub(crate) fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<taur
     Menu::with_items(app, &all)
 }
 
+pub(crate) fn refresh_tray_if_enabled(app: &tauri::AppHandle) {
+    if EXPERIMENTAL_LAZY_TRAY_REFRESH {
+        return;
+    }
+    if let Ok(new_menu) = build_tray_menu(app) {
+        if let Some(tray) = app.tray_by_id(TRAY_ID) {
+            let _ = tray.set_menu(Some(new_menu));
+        }
+    }
+}
+
 fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
     log::info!("[tray] menu event: {event_id}");
 
@@ -261,11 +301,7 @@ fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
             }
 
             // Rebuild tray menu with updated priority
-            if let Ok(new_menu) = build_tray_menu(app) {
-                if let Some(tray) = app.tray_by_id(TRAY_ID) {
-                    let _ = tray.set_menu(Some(new_menu));
-                }
-            }
+            refresh_tray_if_enabled(app);
 
             // Notify frontend to refresh API Pool list
             let _ = app.emit("tray-priority-changed", ());

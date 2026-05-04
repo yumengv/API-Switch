@@ -1,8 +1,8 @@
 use super::circuit_breaker::CircuitBreaker;
 use super::handlers;
 use crate::database::{AppSettings, Database};
-use axum::Router;
 use axum::routing::{get, post};
+use axum::Router;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -72,6 +72,10 @@ impl ProxyServer {
     }
 
     pub async fn start(&self) -> Result<(), String> {
+        self.start_with_admin(None).await
+    }
+
+    pub async fn start_with_admin(&self, admin_router: Option<Router>) -> Result<(), String> {
         if self.shutdown_tx.read().await.is_some() {
             return Err("Proxy already running".to_string());
         }
@@ -87,12 +91,19 @@ impl ProxyServer {
             .allow_methods(Any)
             .allow_headers(Any);
 
-        let app = Router::new()
+        let mut app = Router::new()
             .route("/health", get(handlers::health_check))
-            .route("/v1/chat/completions", post(handlers::handle_chat_completions))
+            .route(
+                "/v1/chat/completions",
+                post(handlers::handle_chat_completions),
+            )
             .route("/v1/models", get(handlers::handle_list_models))
             .layer(cors)
             .with_state(self.state.clone());
+
+        if let Some(admin_router) = admin_router {
+            app = app.merge(admin_router);
+        }
 
         let listener = tokio::net::TcpListener::bind(&addr)
             .await

@@ -1,9 +1,10 @@
+pub mod admin_cmd;
 pub mod channel;
-pub mod pool;
-pub mod token;
-pub mod usage;
+pub mod cli;
 pub mod config;
+pub mod limit;
+pub mod pool;
 pub mod proxy_cmd;
 pub mod test_chat;
-pub mod cli;
-pub mod limit;
+pub mod token;
+pub mod usage;
