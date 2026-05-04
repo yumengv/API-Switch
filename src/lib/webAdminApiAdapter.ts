@@ -9,7 +9,7 @@ import type {
   ModelInfo,
   ModelCatalogMetaUpdate,
 } from '../features/channels/types';
-import type { DashboardFilter, DashboardStats, ChartDataPoint, ModelRanking, UsageLog, UsageLogFilter, PaginatedResult } from '../types';
+import type { DashboardFilter, DashboardStats, ChartDataPoint, ModelRanking, UsageLog, UsageLogFilter, PaginatedResult, ApiEntry, AccessKey } from '../types';
 
 const apiBase = '/admin';
 
@@ -146,5 +146,20 @@ export const webAdminApiAdapter: ApiAdapter = {
     getCallTrend: (filter) => request<ChartDataPoint[]>('GET', '/dashboard/call-trend', undefined, filter as Record<string, unknown>),
     getModelDistribution: (filter) => request<ModelRanking[]>('GET', '/dashboard/model-distribution', undefined, filter as Record<string, unknown>),
     getUserTrend: (filter) => request<ChartDataPoint[]>('GET', '/dashboard/user-trend', undefined, filter as Record<string, unknown>),
+  },
+  pool: {
+    list: () => request<ApiEntry[]>('GET', '/pool'),
+    toggle: (id, enabled) => request<void>('PUT', `/pool/${id}/toggle`, { enabled }),
+    reorder: (orderedIds) => request<void>('POST', '/pool/reorder', { orderedIds }),
+    create: (params) => request<ApiEntry>('POST', '/pool', params),
+    delete: (id) => request<void>('DELETE', `/pool/${id}`),
+    testLatency: (id) => request<{ entry_id: string; latency_ms: number | null }>('POST', `/pool/${id}/test-latency`),
+    backfillCatalogMeta: (items) => request<void>('POST', '/pool/backfill-catalog-meta', { items }),
+  },
+  tokens: {
+    list: () => request<AccessKey[]>('GET', '/tokens'),
+    create: (name) => request<AccessKey>('POST', '/tokens', { name }),
+    delete: (id) => request<void>('DELETE', `/tokens/${id}`),
+    toggle: (id, enabled) => request<void>('PUT', `/tokens/${id}/toggle`, { enabled }),
   },
 };
