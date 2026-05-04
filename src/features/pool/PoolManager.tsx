@@ -21,17 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  listEntries,
-  toggleEntry,
-  reorderEntries,
-  createEntry,
-  testEntryLatency,
-  deleteEntry,
-  updateSettings,
-  backfillEntryCatalogMeta,
-  getSettings,
-} from "@/lib/api";
+import { updateSettings, getSettings } from "@/lib/api";
 import { useApiAdapter } from "@/lib/useApiAdapter";
 import { DEFAULT_SETTINGS, type ApiEntry, type AppSettings, type Channel, type ModelSortMode } from "@/types";
 import { cn, formatResponseMs, parseResponseMs } from "@/lib/utils";
@@ -471,10 +461,12 @@ function AddApiDialog({
   open,
   onOpenChange,
   channels,
+  adapter,
 }: {
   open: boolean;
   onOpenChange: (value: boolean) => void;
   channels: Channel[];
+  adapter: ReturnType<typeof useApiAdapter>;
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -487,14 +479,10 @@ function AddApiDialog({
   const createMutation = useMutation({
     mutationFn: () => {
       const meta = buildCatalogDisplayMeta(modelName);
-      return createEntry({
-        channel_id: channelId,
+      return adapter.pool.create({
+        channelId: channelId,
         model: modelName,
-        display_name: displayName || undefined,
-        provider_logo: meta.logo,
-        release_date: meta.releaseDate,
-        model_meta_zh: meta.modelMetaZh,
-        model_meta_en: meta.modelMetaEn,
+        displayName: displayName || undefined,
       });
     },
     onSuccess: () => {
@@ -599,7 +587,7 @@ export function PoolManager() {
   // Poll every 5s instead of listening for Tauri events
   const { data: entries, isLoading } = useQuery({
     queryKey: ["entries"],
-    queryFn: listEntries,
+    queryFn: () => adapter.pool.list() as Promise<ApiEntry[]>,
     refetchInterval: 5_000,
   });
 
@@ -663,11 +651,11 @@ export function PoolManager() {
         model_meta_en: string;
       }>;
 
-    if (missing.length === 0) return;
+  if (missing.length === 0) return;
 
-    backfillEntryCatalogMeta(missing).then(() => {
-      queryClient.invalidateQueries({ queryKey: ["entries"] });
-    });
+  adapter.pool.backfillCatalogMeta(missing.map((m) => ({ entryId: m.id, catalogProvider: '', catalogModelId: '' }))).then(() => {
+    queryClient.invalidateQueries({ queryKey: ["entries"] });
+  });
   }, [entries, catalogMap, queryClient]);
 
   // Sort entries to match backend router.rs apply_sort_mode logic
@@ -730,7 +718,7 @@ export function PoolManager() {
   }, [displayEntries, filterChannel, filterText]);
 
   const reorderMutation = useMutation({
-    mutationFn: reorderEntries,
+    mutationFn: (orderedIds: string[]) => adapter.pool.reorder(orderedIds),
     onSuccess: () => {
       const scrollY = window.scrollY;
       queryClient.invalidateQueries({ queryKey: ["entries"] });
@@ -740,7 +728,7 @@ export function PoolManager() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => deleteEntry(id),
+    mutationFn: (id: string) => adapter.pool.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["entries"] });
       setDeleteTarget(null);
@@ -755,21 +743,21 @@ export function PoolManager() {
     ) => {
       const hotKey = options.ctrlKey || options.metaKey;
 
-      if (options.shiftKey) {
-        const targetEntries = filteredEntries;
-        const currentIds = localOrder ? localOrder : displayEntries.map((e) => e.id);
-        await Promise.all(targetEntries.map((e) => toggleEntry(e.id, enabled)));
-        queryClient.setQueryData<ApiEntry[] | undefined>(["entries"], (prev) =>
-          prev?.map((e) => (targetEntries.some((t) => t.id === e.id) ? { ...e, enabled } : e)),
-        );
-        setLocalOrder(currentIds);
-        requestAnimationFrame(() => {
-          queryClient.invalidateQueries({ queryKey: ["entries"] });
-        });
-        return;
-      }
+  if (options.shiftKey) {
+    const targetEntries = filteredEntries;
+    const currentIds = localOrder ? localOrder : displayEntries.map((e) => e.id);
+    await Promise.all(targetEntries.map((e) => adapter.pool.toggle(e.id, enabled)));
+    queryClient.setQueryData<ApiEntry[] | undefined>(["entries"], (prev) =>
+      prev?.map((e) => (targetEntries.some((t) => t.id === e.id) ? { ...e, enabled } : e)),
+    );
+    setLocalOrder(currentIds);
+    requestAnimationFrame(() => {
+      queryClient.invalidateQueries({ queryKey: ["entries"] });
+    });
+    return;
+  }
 
-      await toggleEntry(entry.id, enabled);
+  await adapter.pool.toggle(entry.id, enabled);
       queryClient.setQueryData<ApiEntry[] | undefined>(["entries"], (prev) =>
         prev?.map((e) => (e.id === entry.id ? { ...e, enabled } : e)),
       );
@@ -853,40 +841,33 @@ export function PoolManager() {
       grouped.set(entry.channel_id, list);
     }
 
-    const testChannel = async (channelEntries: ApiEntry[]) => {
-      for (const entry of channelEntries) {
-        setTestingEntryIds((prev) => {
-          const next = new Set(prev);
-          for (const e of channelEntries) next.delete(e.id);
-          next.add(entry.id);
-          return next;
-        });
-        try {
-          const result = await testEntryLatency(entry.id);
-          if (result.status === "ok") {
-            results[entry.id] = result.response_ms;
-          } else if (result.status === "failed") {
-            results[entry.id] = "X";
-            await toggleEntry(entry.id, false);
-            queryClient.setQueryData<ApiEntry[] | undefined>(["entries"], (prev) =>
-              prev?.map((e) => (e.id === entry.id ? { ...e, enabled: false } : e)),
-            );
-          } else if (result.status === "disabled") {
-            results[entry.id] = result.response_ms || "X";
-            queryClient.setQueryData<ApiEntry[] | undefined>(["entries"], (prev) =>
-              prev?.map((e) => (e.id === entry.id ? { ...e, enabled: false } : e)),
-            );
-          } else {
-            results[entry.id] = "X";
-          }
-        } catch {
+  const testChannel = async (channelEntries: ApiEntry[]) => {
+    for (const entry of channelEntries) {
+      setTestingEntryIds((prev) => {
+        const next = new Set(prev);
+        for (const e of channelEntries) next.delete(e.id);
+        next.add(entry.id);
+        return next;
+      });
+      try {
+        const result = await adapter.pool.testLatency(entry.id);
+        if (result.latency_ms !== null) {
+          results[entry.id] = result.latency_ms.toString();
+        } else {
           results[entry.id] = "X";
+          await adapter.pool.toggle(entry.id, false);
+          queryClient.setQueryData<ApiEntry[] | undefined>(["entries"], (prev) =>
+            prev?.map((e) => (e.id === entry.id ? { ...e, enabled: false } : e)),
+          );
         }
-        completed++;
-        setTestProgress({ current: completed, total });
-        setTestResults({ ...results });
+      } catch {
+        results[entry.id] = "X";
       }
-    };
+      completed++;
+      setTestProgress({ current: completed, total });
+      setTestResults({ ...results });
+    }
+  };
 
     await Promise.all([...grouped.values()].map(testChannel));
 
@@ -1031,7 +1012,7 @@ export function PoolManager() {
         </CardContent>
       </Card>
 
-      <AddApiDialog open={showAdd} onOpenChange={setShowAdd} channels={channels || []} />
+        <AddApiDialog open={showAdd} onOpenChange={setShowAdd} channels={channels || []} adapter={adapter} />
       <TestChatDialog
         open={!!testEntry}
         onOpenChange={(v) => !v && setTestEntry(null)}

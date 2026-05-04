@@ -13,7 +13,6 @@ import {
   DialogFooter,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { listAccessKeys, createAccessKey, deleteAccessKey, toggleAccessKey } from "@/lib/api";
 import { useApiAdapter } from "@/lib/useApiAdapter";
 import type { AccessKey } from "@/types";
 
@@ -21,7 +20,7 @@ const POLL_INTERVAL_MS = 10_000;
 
 export function TokenManager() {
   const { t } = useTranslation();
-  const _adapter = useApiAdapter(); // reserved for future adapter.tokens migration
+  const adapter = useApiAdapter();
 
   const [keys, setKeys] = useState<AccessKey[]>([]);
   const [loading, setLoading] = useState(true);
@@ -32,14 +31,14 @@ export function TokenManager() {
 
   const fetchKeys = useCallback(async () => {
     try {
-      const data = await listAccessKeys();
+      const data = await adapter.tokens.list();
       setKeys(data);
     } catch {
       // keep stale data on transient failure
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [adapter.tokens]);
 
   useEffect(() => {
     fetchKeys();
@@ -50,7 +49,7 @@ export function TokenManager() {
   const handleCreate = async () => {
     if (!newKeyName.trim()) return;
     try {
-      const key = await createAccessKey(newKeyName.trim());
+      const key = await adapter.tokens.create(newKeyName.trim());
       setCreatedKey(key);
       setNewKeyName("");
       setShowCreate(false);
@@ -62,7 +61,7 @@ export function TokenManager() {
 
   const handleDelete = async (id: string) => {
     try {
-      await deleteAccessKey(id);
+      await adapter.tokens.delete(id);
       await fetchKeys();
     } catch {
       // handle error
@@ -71,7 +70,7 @@ export function TokenManager() {
 
   const handleToggle = async (id: string, enabled: boolean) => {
     try {
-      await toggleAccessKey(id, enabled);
+      await adapter.tokens.toggle(id, enabled);
       await fetchKeys();
     } catch {
       // handle error
