@@ -3,11 +3,13 @@ mod commands;
 mod database;
 mod error;
 mod proxy;
+mod runtime_mode;
 mod services;
 
 use admin::AdminServer;
 use database::{AppSettings, Database};
 use proxy::ProxyServer;
+use runtime_mode::RuntimeMode;
 use std::sync::Arc;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::{Emitter, Manager};
@@ -22,6 +24,7 @@ pub struct AppState {
     pub proxy: Arc<tokio::sync::RwLock<Option<ProxyServer>>>,
     pub admin: Arc<tokio::sync::RwLock<Option<AdminServer>>>,
     pub failure_counts: Arc<tokio::sync::RwLock<std::collections::HashMap<String, u32>>>,
+    pub runtime_mode: RuntimeMode,
 }
 
 pub(crate) const TRAY_ID: &str = "api-switch-tray";
@@ -29,10 +32,13 @@ pub(crate) const EXPERIMENTAL_LAZY_TRAY_REFRESH: bool = false;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let (runtime_mode, mode_source) = runtime_mode::detect_runtime_mode();
+    log::info!("Runtime mode: {:?} (source: {:?})", runtime_mode, mode_source);
+
     let _app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
-        .setup(|app| {
+        .setup(move |app| {
             // Initialize database
             let db = Database::open()?;
             db.create_tables()?;
@@ -40,15 +46,16 @@ pub fn run() {
             admin::apply_admin_env(&mut settings_cache);
             db.update_settings(&settings_cache)?;
 
-            let state = AppState {
-                db: Arc::new(db),
-                settings: Arc::new(tokio::sync::RwLock::new(settings_cache)),
-                proxy: Arc::new(tokio::sync::RwLock::new(None)),
-                admin: Arc::new(tokio::sync::RwLock::new(None)),
-                failure_counts: Arc::new(
-                    tokio::sync::RwLock::new(std::collections::HashMap::new()),
-                ),
-            };
+        let state = AppState {
+            db: Arc::new(db),
+            settings: Arc::new(tokio::sync::RwLock::new(settings_cache)),
+            proxy: Arc::new(tokio::sync::RwLock::new(None)),
+            admin: Arc::new(tokio::sync::RwLock::new(None)),
+            failure_counts: Arc::new(
+                tokio::sync::RwLock::new(std::collections::HashMap::new()),
+            ),
+            runtime_mode,
+        };
             app.manage(state);
 
             // Auto-start proxy if proxy_enabled is set
@@ -93,47 +100,66 @@ pub fn run() {
                 }
             });
 
-            // Read settings to decide startup behavior
-            let settings = app.state::<AppState>().settings.blocking_read().clone();
+        // Read settings to decide startup behavior
+        let settings = app.state::<AppState>().settings.blocking_read().clone();
+        let runtime_mode = app.state::<AppState>().runtime_mode;
 
+        // Build tray icon and window management (Combined mode only)
+        if runtime_mode == RuntimeMode::Combined {
             // Build tray icon (ref: cc-switch/src/lib.rs)
-            let tray_menu = build_tray_menu(app.handle())?;
-            let _tray = tauri::tray::TrayIconBuilder::with_id(TRAY_ID)
-                .icon(app.default_window_icon().cloned().unwrap())
-                .menu(&tray_menu)
-                .show_menu_on_left_click(true)
-                .on_tray_icon_event(|tray, event| match event {
-                    tauri::tray::TrayIconEvent::Click {
-                        button: tauri::tray::MouseButton::Right,
-                        button_state: tauri::tray::MouseButtonState::Up,
-                        ..
-                    } => {
-                        if EXPERIMENTAL_LAZY_TRAY_REFRESH {
-                            let app = tray.app_handle().clone();
-                            tauri::async_runtime::spawn(async move {
-                                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-                                if let Some(tray) = app.tray_by_id(TRAY_ID) {
-                                    if let Ok(new_menu) = build_tray_menu(&app) {
-                                        let _ = tray.set_menu(Some(new_menu));
-                                    }
+            // If tray build fails, fall back to Standalone behavior (skip tray/window but continue)
+            match build_tray_menu(app.handle()) {
+                Ok(tray_menu) => {
+                    match tauri::tray::TrayIconBuilder::with_id(TRAY_ID)
+                        .icon(app.default_window_icon().cloned().unwrap())
+                        .menu(&tray_menu)
+                        .show_menu_on_left_click(true)
+                        .on_tray_icon_event(|tray, event| match event {
+                            tauri::tray::TrayIconEvent::Click {
+                                button: tauri::tray::MouseButton::Right,
+                                button_state: tauri::tray::MouseButtonState::Up,
+                                ..
+                            } => {
+                                if EXPERIMENTAL_LAZY_TRAY_REFRESH {
+                                    let app = tray.app_handle().clone();
+                                    tauri::async_runtime::spawn(async move {
+                                        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                                        if let Some(tray) = app.tray_by_id(TRAY_ID) {
+                                            if let Ok(new_menu) = build_tray_menu(&app) {
+                                                let _ = tray.set_menu(Some(new_menu));
+                                            }
+                                        }
+                                    });
                                 }
-                            });
+                            }
+                            tauri::tray::TrayIconEvent::DoubleClick { .. } => {
+                                if let Some(window) = tray.app_handle().get_webview_window("main") {
+                                    let _ = window.show();
+                                    let _ = window.set_focus();
+                                }
+                            }
+                            _ => {}
+                        })
+                        .on_menu_event(move |app, event| {
+                            handle_tray_menu_event(app, &event.id.0);
+                        })
+                        .build(app)
+                    {
+                        Ok(_tray) => {
+                            log::info!("Tray icon built successfully");
+                        }
+                        Err(e) => {
+                            log::warn!("Failed to build tray icon: {e}. Falling back to Standalone behavior (no tray/window).");
                         }
                     }
-                    tauri::tray::TrayIconEvent::DoubleClick { .. } => {
-                        if let Some(window) = tray.app_handle().get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
-                    }
-                    _ => {}
-                })
-                .on_menu_event(move |app, event| {
-                    handle_tray_menu_event(app, &event.id.0);
-                })
-                .build(app)?;
+                }
+                Err(e) => {
+                    log::warn!("Failed to build tray menu: {e}. Falling back to Standalone behavior (no tray/window).");
+                }
+            }
 
-            // Show or keep hidden based on settings
+            // Show or keep hidden based on settings (only if tray succeeded)
+            // Note: We still try to show the window even if tray failed, but the window close handler won't work properly
             if let Some(window) = app.get_webview_window("main") {
                 if !settings.start_minimized {
                     let _ = window.show();
@@ -148,6 +174,9 @@ pub fn run() {
                     }
                 });
             }
+        } else {
+            log::info!("Running in Standalone mode - skipping tray and window management");
+        }
 
             log::info!("API Switch initialized");
             Ok(())

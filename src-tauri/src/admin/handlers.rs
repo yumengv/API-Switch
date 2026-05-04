@@ -25,6 +25,7 @@ pub struct LoginResponse {
 pub struct AdminStatus {
     running: bool,
     port: i32,
+    runtime_mode: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -161,9 +162,16 @@ pub async fn logout(
 
 pub async fn status(State(state): State<AdminState>) -> Json<AdminStatus> {
     let settings = state.settings.read().await.clone();
+    let runtime_mode = state.runtime.as_ref().map(|runtime| {
+        match runtime.runtime_mode {
+            crate::runtime_mode::RuntimeMode::Combined => "combined".to_string(),
+            crate::runtime_mode::RuntimeMode::Standalone => "standalone".to_string(),
+        }
+    });
     Json(AdminStatus {
         running: true,
         port: settings.web_admin_port,
+        runtime_mode,
     })
 }
 
