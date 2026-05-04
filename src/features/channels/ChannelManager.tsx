@@ -109,7 +109,7 @@ export const ChannelManager: React.FC = () => {
   };
 
   return (
-    <div className="rounded-xl border border-border bg-card p-6 shadow-sm">
+    <div className="border border-border bg-card p-6 shadow-sm">
       <div className="space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-4">
         <div>

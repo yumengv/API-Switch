@@ -250,7 +250,7 @@ export function getCatalogProviderLogo(modelId: string): string {
 
   // Layer 1: family rules (most stable for repeated provider aliases like minimaxai/...)
   for (const [re, brand] of familyRules) {
-    if (family && re.test(family)) return `/logo/${brand}.svg`;
+    if (family && re.test(family)) return `${import.meta.env.BASE_URL}logo/${brand}.svg`;
   }
 
   // Layer 2: namespace prefix with alias normalization
@@ -258,16 +258,16 @@ export function getCatalogProviderLogo(modelId: string): string {
   if (slashIdx > 0) {
     const ns = id.slice(0, slashIdx);
     const brand = namespaceAliases[ns] || ns;
-    return `/logo/${brand}.svg`;
+    return `${import.meta.env.BASE_URL}logo/${brand}.svg`;
   }
 
   // Layer 3: model id prefix rules
   for (const [re, brand] of brandRules) {
-    if (re.test(id)) return `/logo/${brand}.svg`;
+    if (re.test(id)) return `${import.meta.env.BASE_URL}logo/${brand}.svg`;
   }
 
   // Layer 4: custom fallback
-  return "/logo/custom.svg";
+    return `${import.meta.env.BASE_URL}logo/custom.svg`;
 }
 
 export function formatTokenCount(value?: number): string | null {
