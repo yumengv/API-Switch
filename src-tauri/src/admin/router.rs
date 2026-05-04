@@ -17,19 +17,57 @@ pub fn build_admin_router(state: AdminState) -> Router {
             get(handlers::get_settings).put(handlers::update_settings),
         )
         // Channel API routes – all require auth
-        .route("/admin/channels", get(channel_handlers::list).post(channel_handlers::create))
-        .route("/admin/channels/:id", get(channel_handlers::list).put(channel_handlers::update).delete(channel_handlers::delete))
-        .route("/admin/channels/:id/fetch-models", post(channel_handlers::fetch_models))
-        .route("/admin/channels/fetch-models-direct", post(channel_handlers::fetch_models_direct))
-        .route("/admin/channels/probe-url", post(channel_handlers::probe_url))
-        .route("/admin/channels/:id/select-models", post(channel_handlers::select_models))
-        .route("/admin/channels/:id/response-ms", put(channel_handlers::update_response_ms))
+        .route(
+            "/admin/channels",
+            get(channel_handlers::list).post(channel_handlers::create),
+        )
+        .route(
+            "/admin/channels/:id",
+            get(channel_handlers::list)
+                .put(channel_handlers::update)
+                .delete(channel_handlers::delete),
+        )
+        .route(
+            "/admin/channels/:id/fetch-models",
+            post(channel_handlers::fetch_models),
+        )
+        .route(
+            "/admin/channels/fetch-models-direct",
+            post(channel_handlers::fetch_models_direct),
+        )
+        .route(
+            "/admin/channels/probe-url",
+            post(channel_handlers::probe_url),
+        )
+        .route(
+            "/admin/channels/:id/select-models",
+            post(channel_handlers::select_models),
+        )
+        .route(
+            "/admin/channels/:id/response-ms",
+            put(channel_handlers::update_response_ms),
+        )
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     Router::new()
         .route("/admin", get(crate::admin::static_files::admin_index))
         .route("/admin/", get(crate::admin::static_files::admin_index))
-        .route("/admin/assets/*path", get(crate::admin::static_files::admin_asset))
+        .route(
+            "/admin/assets/*path",
+            get(crate::admin::static_files::admin_asset),
+        )
+        .route(
+            "/admin/star.jpg",
+            get(crate::admin::static_files::admin_asset),
+        )
+        .route(
+            "/admin/favicon.ico",
+            get(crate::admin::static_files::admin_asset),
+        )
+        .route(
+            "/admin/logo/*path",
+            get(crate::admin::static_files::admin_asset),
+        )
         .route("/admin/login", post(handlers::login))
         .route("/admin/health", get(handlers::health))
         .route("/admin/login", axum::routing::options(|| async {}))

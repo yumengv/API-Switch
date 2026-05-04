@@ -19,6 +19,8 @@ const NAV_ITEMS: { key: MainPage; icon: typeof Layers; labelKey: string; externa
   { key: 'guide', icon: BookOpen, labelKey: 'nav.guide', externalLang: { zh: 'GUIDE_CN.md', en: 'GUIDE.md' } },
 ];
 
+const starImageSrc = `${import.meta.env.BASE_URL}star.jpg`;
+
 export interface MainShellProps {
   currentPage: MainPage;
   proxyStatus?: ProxyStatus | null;
@@ -102,7 +104,7 @@ export function MainShell({
 
           <div className="flex justify-center pb-4">
             <a href="https://github.com/wang1970/API-Switch" target="_blank" rel="noopener noreferrer">
-              <img src="/star.jpg" alt="Star on GitHub" className="cursor-pointer transition-opacity hover:opacity-80" />
+              <img src={starImageSrc} alt="Star on GitHub" className="cursor-pointer transition-opacity hover:opacity-80" />
             </a>
           </div>
         </aside>

@@ -2,7 +2,7 @@ use axum::http::{header, HeaderValue, StatusCode, Uri};
 use axum::response::{Html, IntoResponse, Response};
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 #[derive(Deserialize)]
 struct ViteManifestEntry {
@@ -67,6 +67,19 @@ fn cache_control_for(path: &str) -> &'static str {
     }
 }
 
+fn safe_dist_path(path: &str) -> Option<PathBuf> {
+    if path.is_empty() || path == "assets" || path.contains('\\') {
+        return None;
+    }
+
+    let relative = Path::new(path);
+    if !relative.components().all(|component| matches!(component, Component::Normal(_))) {
+        return None;
+    }
+
+    Some(dist_dir().join(relative))
+}
+
 pub async fn admin_index() -> impl IntoResponse {
     let dist = dist_dir();
     let index_path = dist.join("index.html");
@@ -106,7 +119,9 @@ pub async fn admin_asset(uri: Uri) -> Response {
         return StatusCode::NOT_FOUND.into_response();
     }
 
-    let full_path = dist_dir().join(path.replace('/', "\\"));
+    let Some(full_path) = safe_dist_path(path) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
     let Some(bytes) = read_bytes(&full_path) else {
         return StatusCode::NOT_FOUND.into_response();
     };
