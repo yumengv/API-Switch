@@ -23,7 +23,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { listEntries, toggleEntry, reorderEntries, listChannels, createEntry, testEntryLatency, deleteEntry, updateSettings, backfillEntryCatalogMeta, getSettings } from "@/lib/api";
-import { DEFAULT_SETTINGS, type ApiEntry, type Channel, type ModelSortMode } from "@/types";
+import { DEFAULT_SETTINGS, type ApiEntry, type AppSettings, type Channel, type ModelSortMode } from "@/types";
 import { cn, formatResponseMs, parseResponseMs } from "@/lib/utils";
 import { TestChatDialog } from "@/components/proxy/TestChatDialog";
 import { getCatalogModel, getCatalogProviderLogo, formatTokenCount } from "@/lib/modelsCatalog";
@@ -639,7 +639,7 @@ export function ApiPoolPage() {
     setLocalOrder(null);
     localStorage.setItem("api-switch-sort-mode", mode);
     // Use queryClient.getQueryData to get the latest settings without relying on stale closure
-    const currentSettings = queryClient.getQueryData(["settings"]);
+    const currentSettings = queryClient.getQueryData<AppSettings>(["settings"]);
     const merged = { ...DEFAULT_SETTINGS, ...currentSettings, default_sort_mode: mode };
     updateSettings(merged).then(() => {
       queryClient.invalidateQueries({ queryKey: ["settings"] });
