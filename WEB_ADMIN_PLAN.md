@@ -836,40 +836,51 @@ Pool / Tokens / Logs / Dashboard 仍是后续阶段任务，
 
 | 大项 | 进度判断 | 说明 |
 |---|---:|---|
-| 桌面主路径不退化 | 85% | Tray 刷新入口已统一，仍需人工冒烟确认窗口/托盘行为 |
-| Web Admin 基础设施 | 85% | 登录、鉴权、静态入口、状态、Settings、Channels 基础已具备 |
-| Channels 共享闭环 | 95% | 已修正 `selectModels` 双入口数据流，仍需实际手工联调 |
-| Settings 全量更新链路 | 95% | 已改为 `{ data, _version }` envelope，密码空值保留逻辑仍在 |
-| Web 可见错误反馈 | 75% | Channels 已补可见错误；Settings 已有基础 message；仍未统一 toast |
-| 构建/类型/后端检查 | 90% | `cargo check`、`pnpm typecheck`、`pnpm build:web-admin` 已通过 |
-| Phase 1 基本可用完成度 | **约 85% ~ 90%** | 剩余主要是手工冒烟、少量 UI/错误边界与文档进度同步 |
+| 桌面主路径不退化 | 92% | 构建与 Rust 检查通过；DEV 主窗口可见；9098 Proxy/API 与 9099 Web Admin 均归属当前 DEV；托盘交互最后确认 |
+| Web Admin 基础设施 | 95% | 登录、鉴权、静态入口、状态、Settings、Channels、静态资源与 shared shell 已通过浏览器验证 |
+| Channels 共享闭环 | 98% | CRUD、probe、selectModels、selected_models 与 api_entries 写库/清理已通过 DEV API + DB 验证 |
+| Settings 全量更新链路 | 98% | `{ data, _version }` envelope、版本递增、409 冲突、端口迁移/恢复 restart contract 已验证 |
+| Web 可见错误反馈 | 85% | 登录/Channels/probe/Settings 关键错误有结构化反馈；toast 统一仍是后续体验项 |
+| 构建/类型/后端检查 | 95% | `cargo check`、`pnpm typecheck`、`pnpm build:web-admin`、`pnpm build:renderer` 已通过；仍有非阻断 warning/chunk warning |
+| Phase 1 基本可用完成度 | **约 92% ~ 95%** | 显示一致性已优先收口；操作一致性核心链路已验证，剩余主要是桌面 tray/window 人工冒烟与后续体验统一 |
 
 #### 总体目标进度（含后续阶段）
 
 | 大项 | 进度判断 | 说明 |
 |---|---:|---|
-| Web Admin 基础设施 | 85% | 基础可用，仍需进一步实机/浏览器验证 |
-| Channels 共享闭环 | 95% | 当前最接近闭环的业务模块 |
-| Settings 共享试点 | 95% | 共享 UI + 全量更新链路已基本收口 |
+| Web Admin 基础设施 | 95% | 基础可用，9099 浏览器验证通过，静态资源与 shared shell 显示一致性已优先收口 |
+| Channels 共享闭环 | 98% | CRUD、probe、selectModels、selected_models 与 api_entries 已通过 DEV API + DB 验证 |
+| Settings 共享试点 | 98% | 共享 UI + 全量更新链路、版本冲突、端口迁移 restart contract 已验证 |
 | 自动环境检测与统一模式治理 | 35% | 尚未进入 Phase 2，仍是后续核心缺口 |
 | Standalone/headless 闭环 | 45% | 基础结构存在，但未完成统一模式检测和降级策略 |
-| Tray 桌面优先保障制度化 | 65% | 代码入口已收口，回归门禁/人工清单仍需补 |
-| 其余业务模块共享迁移 | 20% | Pool / Tokens / Logs / Dashboard 仍是后续 Phase 3 |
-| 总体目标完成度 | **约 65%** | 比初始规划已有提升，但还没到“完整双入口系统” |
+| Tray 桌面优先保障制度化 | 70% | 代码入口已收口；按当前优先级，托盘放在显示一致和操作一致之后最后确认 |
+| 其余业务模块共享迁移 | 20% | Pool / Tokens / Logs / Dashboard 仍是后续 Phase 3，不在“先显示一致”阶段扩展 |
+| 总体目标完成度 | **约 70%** | Phase 1 显示一致性和核心操作链路提升明显；完整双入口系统仍需 Phase 2/3 |
 
 ### 10.10 离“基本能用”还差什么
 
 按个人系统的 Phase 1 标准，离“基本能用”已经不远，剩余主要不是大架构问题，而是收口验证：
 
-1. **手工冒烟验证**
-   - 桌面启动
-   - Tray 打开/刷新/点击排序
+1. **显示一致性优先（当前已基本完成）**
    - Web 登录
+   - Web 主界面使用共享 `MainShell`
+   - Web 与桌面主导航样式、间距、边框、配色基本一致
+   - public 静态资源（star/favicon/logo）在 `/admin` 下正确显示
+   - Web theme / locale 从 settings 应用，与桌面链路对齐
+
+2. **操作一致性继续收口（当前核心链路已验证，9098/9099 主次已确认）**
+   - 9098 = DEV Proxy/API 主服务端口
+   - 9099 = DEV Web Admin 管理端口
    - Web Channels CRUD
    - Web Settings 保存
    - Web selectModels 后 API Pool 是否同步
 
-2. **Web 最小闭环边界检查**
+3. **托盘最后确认（可押后，不阻塞显示一致性）**
+   - 桌面启动 / 主窗口打开
+   - Tray 打开 / Tray 刷新
+   - 桌面 UI Proxy 启停
+
+4. **Web 最小闭环边界检查**
    - 登录过期/401 后是否能回登录页
    - Settings 版本冲突是否能显示清楚
    - Channels 错误是否能看到明确提示
@@ -881,9 +892,12 @@ Pool / Tokens / Logs / Dashboard 仍是后续阶段任务，
 因此当前判断：
 
 ```text
-离“基本能用”大约还差 10% ~ 15%，
-主要是手工联调和少量边界收口；
-离“完整规划目标”还差约 35%，
+按“先显示一致，再操作一致”的新顺序，
+显示一致性已经基本完成；
+9098（Proxy/API）与 9099（Web Admin）的 DEV 主次已确认；
+Phase 1 离“基本能用”大约还差 3% ~ 5%，
+主要是托盘真实交互和桌面 UI 细节，可按优先级押后；
+离“完整规划目标”还差约 30%，
 主要是 Phase 2 运行模式治理与 Phase 3 其他业务模块迁移。
 ```
 
@@ -894,17 +908,22 @@ Pool / Tokens / Logs / Dashboard 仍是后续阶段任务，
 ```text
 项目已经完成 Web Admin 底层基础设施，
 并在 Channels / Settings 上验证了“Desktop + Web 单套开发”的路线可行；
-Phase 1 已接近基本可用，下一步应先做冒烟验证与收口，
+Phase 1 已经完成“显示一致性优先收口”，Web Admin 与桌面端在共享 MainShell、基础 CSS token、主题/语言和静态资源上已对齐；
+Channels / Settings 的核心操作链路已经通过 DEV API + DB 验证；
+下一步应继续补操作一致性中仍未覆盖的少量 UI 路径；
+托盘作为最后确认项，不阻塞当前 Web 显示一致性和核心操作一致性判断，
 通过后再进入运行模式治理与无桌面环境闭环。
 ```
 
 ### 10.12 下一步优先顺序（根据当前真实进度重排）
 
-1. **完成 Phase 1 冒烟验证与收口**
-2. **进入 Phase 2：自动环境检测 + 统一启动编排第一版**
-3. **进入 Phase 3：API Pool / Tokens / Logs / Dashboard 的共享迁移**
-4. **进入 Phase 4/5：体验、一致性、工程化封口**
-5. **最后才评估是否需要同一 binary 下的 CLI 形态**
+1. **先锁定显示一致性（已基本完成）**
+2. **继续完成核心操作一致性（9098 Proxy/API、9099 Web Admin 已确认）**
+3. **托盘最后确认（可押后，不阻塞 Web 当前推进）**
+4. **进入 Phase 2：自动环境检测 + 统一启动编排第一版**
+5. **进入 Phase 3：API Pool / Tokens / Logs / Dashboard 的共享迁移**
+6. **进入 Phase 4/5：体验、一致性、工程化封口**
+7. **最后才评估是否需要同一 binary 下的 CLI 形态**
 
 ---
 
@@ -934,13 +953,9 @@ Phase 1 已接近基本可用，下一步应先做冒烟验证与收口，
 
 #### 尚未完成（Phase 1 退出前必须确认）
 
-- ⏳ 桌面主路径人工冒烟
-- ⏳ Web Admin 最小闭环人工冒烟
-- ⏳ `selectModels -> API Pool` 的实际写库与回显确认
-- ⏳ Settings 保存后的桌面联动确认（tray / proxy / admin）
-- ⏳ Web 静态资源补齐：public 图片 / logo / star 图在 `/admin` 下正确显示
-- ⏳ Web 主题/语言应用链路与桌面完全对齐验证
-- ⏳ 剩余映射页面（API Pool / Token / Logs / Dashboard）在 Web 下的运行时错误逐页收口
+- ⏳ 桌面侧操作体验与 Web 操作体验的最终人工对照
+- ⏳ 托盘最后确认：tray 图标 / tray 菜单 / tray 排序刷新
+- ⏳ 剩余映射页面（API Pool / Token / Logs / Dashboard）在 Web 下继续保持“开发中”占位，后续 Phase 3 再迁移
 
 ### 10.14 Phase 1 冒烟验证清单（退出门槛）
 
