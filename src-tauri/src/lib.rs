@@ -232,40 +232,14 @@ pub fn run() {
 
 pub(crate) fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let app_state = app.state::<AppState>();
-    let settings = app_state
-        .settings
-        .try_read()
-        .map(|s| s.clone())
-        .unwrap_or_else(|_| {
-            app_state
-                .db
-                .get_settings()
-                .unwrap_or_default()
-        });
-    
-    let current_group = settings.active_group;
-    
-    // Get all group names from DB
-    let all_groups = app_state
-        .db
-        .get_all_group_names()
-        .unwrap_or_default();
-    
-    // Ensure "auto" is always in the list (even if no entries have group_name="auto")
-    let groups: Vec<String> = if all_groups.contains(&"auto".to_string()) {
-        all_groups
-    } else {
-        let mut g = all_groups;
-        g.insert(0, "auto".to_string());
-        g
-    };
-    
-    // Get enabled entries for the current group
+
+    // Tray only reflects AUTO-group priority shortcuts.
+    // It does not select groups or write active_group.
     let entries = app_state
         .db
-        .get_enabled_entries_for_group(&current_group)
+        .get_enabled_entries_for_group("auto")
         .unwrap_or_default();
-    
+
     // Use DB sort_index ordering for tray entries (no default sort mode applied)
     // Entries are already ordered by sort_index from the database
     // No additional sorting is performed here
@@ -275,30 +249,7 @@ pub(crate) fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<taur
     let show_item = MenuItem::with_id(app, "show_main", "Open Main Window", true, None::<String>)?;
     let separator1 = PredefinedMenuItem::separator(app)?;
 
-    // 2. Group submenu (CheckMenuItem with current group marked)
-    let group_menu_items: Vec<CheckMenuItem<tauri::Wry>> = groups
-        .iter()
-        .map(|group| {
-            let checked = group == &current_group;
-            CheckMenuItem::with_id(app, &format!("group:{}", group), group, true, checked, None::<String>).unwrap()
-        })
-        .collect();
-    
-// Create a Submenu with ID and items - need to convert to slice of trait objects
-    let group_items: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = group_menu_items
-        .iter()
-        .map(|item| item as &dyn tauri::menu::IsMenuItem<_>)
-        .collect();
-    
-    let group_menu_item = tauri::menu::Submenu::with_id_and_items(
-        app,
-        "groups_submenu",
-        "Groups",
-        true,
-        &group_items,
-    )?;
-
-    // 3. Top N entries for current group (CheckMenuItem)
+    // 2. Top N AUTO-group entries (CheckMenuItem)
     let check_items: Vec<CheckMenuItem<tauri::Wry>> = top5
         .iter()
         .enumerate()
@@ -312,16 +263,14 @@ pub(crate) fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<taur
         })
         .collect();
 
-    // 4. Quit
+    // 3. Quit
     let separator2 = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, "quit", "Exit", true, None::<String>)?;
 
     // Assemble menu
-    let mut all: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = Vec::with_capacity(top5.len() + 6);
+    let mut all: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = Vec::with_capacity(top5.len() + 5);
     all.push(&show_item as &dyn tauri::menu::IsMenuItem<_>);
     all.push(&separator1 as &dyn tauri::menu::IsMenuItem<_>);
-    all.push(&group_menu_item as &dyn tauri::menu::IsMenuItem<_>);
-    all.push(&separator2 as &dyn tauri::menu::IsMenuItem<_>);
     for item in &check_items {
         all.push(item);
     }
@@ -356,55 +305,29 @@ fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
             }
         }
         _ => {
-            // Parse event_id to determine if it's a group click or model click
-            if event_id.starts_with("group:") {
-                // Group click - switch default group
-                let group_name = event_id.strip_prefix("group:").unwrap_or(event_id);
-                log::info!("[tray] switching default group: {}", group_name);
-                
-                // Update active_group in settings (single source of truth for default group)
-                {
-                    let app_state = app.state::<AppState>();
-                    let mut settings_guard = app_state.settings.blocking_write();
-                    settings_guard.active_group = group_name.to_string();
-                    
-                    // Persist to DB
-                    let _ = app_state.db.update_settings(&settings_guard);
-                }
-                
-                // Refresh tray menu
-                refresh_tray_if_enabled(app);
-                
-                // Notify frontend to refresh
-                let _ = app.emit("tray-priority-changed", ());
-            } else if event_id.starts_with("model:") {
-                // Model click - set as top priority (existing behavior)
+            if event_id.starts_with("model:") {
+                // Tray click only reprioritizes an existing AUTO-group entry.
+                // It does not change group routing or persist active_group.
                 let entry_id = event_id.strip_prefix("model:").unwrap_or(event_id).to_string();
-                log::info!("[tray] setting priority for entry={entry_id}");
+                log::info!("[tray] setting AUTO-group priority for entry={entry_id}");
 
-                // Update sort_index within current default group only
                 {
                     let app_state = app.state::<AppState>();
-                    let current_group = app_state
-                        .settings
-                        .blocking_read()
-                        .active_group
-                        .clone();
                     let guard = app_state.db.conn.lock();
                     if let Ok(conn) = guard {
                         let now = chrono::Utc::now().timestamp();
                         let _ = conn.execute(
-                            "UPDATE api_entries SET sort_index = sort_index + 1, updated_at = ?1 WHERE id != ?2 AND COALESCE(group_name, 'auto') = ?3",
-                            rusqlite::params![now, entry_id, current_group],
+                            "UPDATE api_entries SET sort_index = sort_index + 1, updated_at = ?1 WHERE id != ?2 AND COALESCE(group_name, 'auto') = 'auto'",
+                            rusqlite::params![now, entry_id],
                         );
                         let _ = conn.execute(
-                            "UPDATE api_entries SET sort_index = 0, updated_at = ?1 WHERE id = ?2 AND COALESCE(group_name, 'auto') = ?3",
-                            rusqlite::params![now, entry_id, current_group],
+                            "UPDATE api_entries SET sort_index = 0, updated_at = ?1 WHERE id = ?2 AND COALESCE(group_name, 'auto') = 'auto'",
+                            rusqlite::params![now, entry_id],
                         );
                     }
                 }
 
-                // Rebuild tray menu with updated priority
+                // Rebuild tray menu with updated AUTO-group priority.
                 refresh_tray_if_enabled(app);
 
                 // Notify frontend to refresh API Pool list
