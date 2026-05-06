@@ -94,31 +94,6 @@ if let Ok(base_url) = std::env::var("ADMIN_BASE_URL") {
     response
 }
 
-pub async fn admin_asset(uri: Uri) -> Response {
-    let path = uri.path().trim_start_matches("/admin/");
-    if path.is_empty() || path == "assets" {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-
-    let Some(full_path) = safe_dist_path(path) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let Some(bytes) = read_bytes(&full_path) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-
-    let mut response = Response::new(bytes.into());
-    response.headers_mut().insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static(content_type_for(path)),
-    );
-    response.headers_mut().insert(
-        header::CACHE_CONTROL,
-        HeaderValue::from_static(cache_control_for(path)),
-    );
-    response
-}
-
 pub async fn admin_asset_root(uri: Uri) -> Response {
     let path = uri.path();
     

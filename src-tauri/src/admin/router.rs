@@ -137,28 +137,10 @@ pub fn build_admin_router(state: AdminState) -> Router {
             "/logo/*path",
             get(crate::admin::static_files::admin_asset_root),
         )
-        // Existing /admin/* routes (preserved for backward compatibility)
-        .route("/admin", get(crate::admin::static_files::admin_index))
-        .route("/admin/", get(crate::admin::static_files::admin_index))
-        .route(
-            "/admin/assets/*path",
-            get(crate::admin::static_files::admin_asset),
-        )
-        .route(
-            "/admin/star.jpg",
-            get(crate::admin::static_files::admin_asset),
-        )
-        .route(
-            "/admin/favicon.ico",
-            get(crate::admin::static_files::admin_asset),
-        )
-        .route(
-            "/admin/logo/*path",
-            get(crate::admin::static_files::admin_asset),
-        )
-        .route("/admin/login", post(handlers::login))
-        .route("/admin/health", get(handlers::health))
-        .route("/admin/version", get(handlers::version))
+// Admin API routes (login, health, version)
+    .route("/admin/login", post(handlers::login))
+    .route("/admin/health", get(handlers::health))
+    .route("/admin/version", get(handlers::version))
 
 
 
