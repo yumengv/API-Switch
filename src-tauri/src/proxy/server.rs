@@ -97,6 +97,10 @@ impl ProxyServer {
                 "/v1/chat/completions",
                 post(handlers::handle_chat_completions),
             )
+            .route(
+                "/v1/messages",
+                post(handlers::handle_messages),
+            )
             .route("/v1/models", get(handlers::handle_list_models))
             .layer(cors)
             .with_state(self.state.clone());
