@@ -119,6 +119,25 @@ pub fn build_admin_router(state: AdminState) -> Router {
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     Router::new()
+        // Root-level serving for eventual 9090/ migration (compatible with /admin/*)
+        .route("/", get(crate::admin::static_files::admin_index))
+        .route(
+            "/assets/*path",
+            get(crate::admin::static_files::admin_asset_root),
+        )
+        .route(
+            "/star.jpg",
+            get(crate::admin::static_files::admin_asset_root),
+        )
+        .route(
+            "/favicon.ico",
+            get(crate::admin::static_files::admin_asset_root),
+        )
+        .route(
+            "/logo/*path",
+            get(crate::admin::static_files::admin_asset_root),
+        )
+        // Existing /admin/* routes (preserved for backward compatibility)
         .route("/admin", get(crate::admin::static_files::admin_index))
         .route("/admin/", get(crate::admin::static_files::admin_index))
         .route(
@@ -139,7 +158,8 @@ pub fn build_admin_router(state: AdminState) -> Router {
         )
         .route("/admin/login", post(handlers::login))
         .route("/admin/health", get(handlers::health))
-    .route("/admin/version", get(handlers::version))
+        .route("/admin/version", get(handlers::version))
+
 
 
 

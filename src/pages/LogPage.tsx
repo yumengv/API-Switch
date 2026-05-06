@@ -1,7 +1,7 @@
-import { useState, Fragment, useEffect } from "react";
+import { useState, Fragment } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { listen } from "@tauri-apps/api/event";
+import { useTauriEvent } from "@/lib/useTauriEvent";
 import { Card, CardContent } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { getUsageLogs } from "@/lib/api";
@@ -48,15 +48,10 @@ export function LogPage() {
   const [errorsOnly, setErrorsOnly] = useState(false);
   const [expandedId, setExpandedId] = useState<number | null>(null);
 
-  // Real-time log push
-  useEffect(() => {
-    const unlisten = listen("new-usage-log", () => {
-      queryClient.invalidateQueries({ queryKey: ["usageLogs"] });
-    });
-    return () => {
-      unlisten.then((fn) => fn());
-    };
-  }, [queryClient]);
+  // Real-time log push (desktop Tauri event; no-op on web)
+  useTauriEvent("new-usage-log", () => {
+    queryClient.invalidateQueries({ queryKey: ["usageLogs"] });
+  });
 
   const { data: result, isLoading } = useQuery({
     queryKey: ["usageLogs", filter],
@@ -141,14 +136,8 @@ export function LogPage() {
               <th className="px-3 py-2 text-left font-medium truncate">{t("log.token")}</th>
               <th className="px-3 py-2 text-left font-medium truncate">{t("log.model")}</th>
               <th className="px-3 py-2 text-left font-medium whitespace-nowrap">{t("log.duration")}</th>
-              <th className="px-3 py-2 text-right font-medium leading-tight">
-                <div>输入</div>
-                <div>TOKEN</div>
-              </th>
-              <th className="px-3 py-2 text-right font-medium leading-tight">
-                <div>输出</div>
-                <div>TOKEN</div>
-              </th>
+<th className="px-3 py-2 text-right font-medium">{t("log.promptTokens")}</th>
+<th className="px-3 py-2 text-right font-medium">{t("log.completionTokens")}</th>
               <th className="px-3 py-2 text-left font-medium whitespace-nowrap">{t("log.status")}</th>
             </tr>
           </thead>

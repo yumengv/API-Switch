@@ -1,5 +1,9 @@
 import type { AppSettings, VersionedAppSettings } from "@/types";
 
+// Centralized admin API prefix — matches Rust backend routes in src-tauri/src/admin/router.rs.
+// To migrate away from /admin, change this single value (coordinated with backend + vite base).
+const ADMIN_PREFIX = "/admin";
+
 const TOKEN_KEY = "api-switch-web-admin-token";
 
 export interface AuditLogItem {
@@ -132,27 +136,27 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export async function login(username: string, password: string): Promise<LoginResponse> {
-  return request<LoginResponse>("/admin/login", {
+  return request<LoginResponse>(`${ADMIN_PREFIX}/login`, {
     method: "POST",
     body: JSON.stringify({ username, password }),
   });
 }
 
 export async function logout(): Promise<void> {
-  await request<{ ok: boolean }>("/admin/logout", { method: "POST" });
+  await request<{ ok: boolean }>(`${ADMIN_PREFIX}/logout`, { method: "POST" });
   clearToken();
 }
 
 export async function getHealth(): Promise<HealthResponse> {
-  return request<HealthResponse>("/admin/health");
+  return request<HealthResponse>(`${ADMIN_PREFIX}/health`);
 }
 
 export async function getStatus(): Promise<AdminStatus> {
-  return request<AdminStatus>("/admin/status");
+  return request<AdminStatus>(`${ADMIN_PREFIX}/status`);
 }
 
 export async function getSettings(): Promise<SettingsResponse> {
-  const response = await request<SettingsResponse>("/admin/settings");
+  const response = await request<SettingsResponse>(`${ADMIN_PREFIX}/settings`);
   return {
     ...response,
     data: {
@@ -167,7 +171,7 @@ export async function updateSettings(settings: VersionedAppSettings): Promise<Up
     ...settings,
     _version: settings._version,
   };
-  return request<UpdateSettingsResponse>("/admin/settings", {
+  return request<UpdateSettingsResponse>(`${ADMIN_PREFIX}/settings`, {
     method: "PUT",
     body: JSON.stringify({
       data: completeSettings,
@@ -177,5 +181,5 @@ export async function updateSettings(settings: VersionedAppSettings): Promise<Up
 }
 
 export async function getAuditLogs(): Promise<AuditLogItem[]> {
-  return request<AuditLogItem[]>("/admin/audit-logs");
+  return request<AuditLogItem[]>(`${ADMIN_PREFIX}/audit-logs`);
 }

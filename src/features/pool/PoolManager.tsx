@@ -22,7 +22,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { useApiAdapter, isTauriRuntime } from "@/lib/useApiAdapter";
+import { useApiAdapter } from "@/lib/useApiAdapter";
+import { useTauriEvent } from "@/lib/useTauriEvent";
 import { type ApiEntry, type AppSettings, type Channel } from "@/types";
 import { cn, formatResponseMs, parseResponseMs } from "@/lib/utils";
 import { TestChatDialog } from "@/components/proxy/TestChatDialog";
@@ -545,27 +546,11 @@ export function PoolManager() {
     setGroupFilter((current) => (groups.includes(nextGroup) ? nextGroup : current === nextGroup ? current : "auto"));
   }, [groups, settings?.active_group]);
 
-  useEffect(() => {
-    if (!isTauriRuntime()) return;
-
-    let cancelled = false;
-    let unlistenPromise: Promise<() => void> | undefined;
-
-    import("@tauri-apps/api/event").then(({ listen }) => {
-      if (cancelled) return;
-      unlistenPromise = listen("tray-priority-changed", () => {
-        queryClient.invalidateQueries({ queryKey: ["entries"] });
-        queryClient.invalidateQueries({ queryKey: ["settings"] });
-      });
-    }).catch(() => {
-      // ignore when event API is unavailable
-    });
-
-    return () => {
-      cancelled = true;
-      void unlistenPromise?.then((unlisten) => unlisten()).catch(() => {});
-    };
-  }, [queryClient]);
+  // Real-time tray reprioritisation (desktop Tauri event; no-op on web)
+  useTauriEvent("tray-priority-changed", () => {
+    queryClient.invalidateQueries({ queryKey: ["entries"] });
+    queryClient.invalidateQueries({ queryKey: ["settings"] });
+  });
 
   const catalogMap = useMemo(() => {
     const map = new Map<string, CatalogDisplayMeta>();

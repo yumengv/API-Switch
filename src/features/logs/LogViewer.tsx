@@ -135,14 +135,8 @@ export function LogViewer() {
               <th className="px-3 py-2 text-left font-medium truncate">{t("log.token")}</th>
               <th className="px-3 py-2 text-left font-medium truncate">{t("log.model")}</th>
               <th className="px-3 py-2 text-left font-medium whitespace-nowrap">{t("log.duration")}</th>
-              <th className="px-3 py-2 text-right font-medium leading-tight">
-                <div>输入</div>
-                <div>TOKEN</div>
-              </th>
-              <th className="px-3 py-2 text-right font-medium leading-tight">
-                <div>输出</div>
-                <div>TOKEN</div>
-              </th>
+<th className="px-3 py-2 text-right font-medium">{t("log.promptTokens")}</th>
+<th className="px-3 py-2 text-right font-medium">{t("log.completionTokens")}</th>
               <th className="px-3 py-2 text-left font-medium whitespace-nowrap">{t("log.status")}</th>
             </tr>
           </thead>

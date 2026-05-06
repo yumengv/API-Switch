@@ -118,3 +118,42 @@ pub async fn admin_asset(uri: Uri) -> Response {
     );
     response
 }
+
+pub async fn admin_asset_root(uri: Uri) -> Response {
+    let path = uri.path();
+    
+    // Strip root prefixes: /assets/, /logo/, etc.
+    let stripped = if let Some(rest) = path.strip_prefix("/assets/") {
+        rest
+    } else if let Some(rest) = path.strip_prefix("/logo/") {
+        rest
+    } else if path == "/star.jpg" {
+        "star.jpg"
+    } else if path == "/favicon.ico" {
+        "favicon.ico"
+    } else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+
+    if stripped.is_empty() || stripped == "assets" {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
+    let Some(full_path) = safe_dist_path(stripped) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Some(bytes) = read_bytes(&full_path) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+
+    let mut response = Response::new(bytes.into());
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static(content_type_for(stripped)),
+    );
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static(cache_control_for(stripped)),
+    );
+    response
+}

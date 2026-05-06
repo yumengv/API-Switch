@@ -11,7 +11,9 @@ import type {
 } from '../features/channels/types';
 import type { DashboardFilter, DashboardStats, ChartDataPoint, ModelRanking, UsageLog, UsageLogFilter, PaginatedResult, ApiEntry, AccessKey, AppSettings, VersionedAppSettings, ProxyStatus, TestChatResponse, TranslationRelayPayload, TranslationRelayRequest, TranslationRelayResponse } from '../types';
 
-const apiBase = '/admin';
+import { ADMIN_API_PREFIX } from './adminApiConfig';
+
+const apiBase = ADMIN_API_PREFIX;
 
 // Track settings version for optimistic concurrency control
 let lastSettingsVersion = 0;
@@ -199,7 +201,9 @@ settings: {
     start: () => request<ProxyStatus>('POST', '/proxy/start'),
     stop: () => request<void>('POST', '/proxy/stop'),
   },
-  getVersion: () => request<{ version: string }>('GET', '/admin/version'),
+  // BUG FIX: was '/admin/version' which double-prefixed to '/admin/admin/version'
+  // because request() already prepends apiBase. Use relative path like all other endpoints.
+  getVersion: () => request<{ version: string }>('GET', '/version'),
   testChat: (entryId, messages) => request<TestChatResponse>('POST', '/test-chat', { entry_id: entryId, messages }),
   translation: {
     getLatest: async () => {

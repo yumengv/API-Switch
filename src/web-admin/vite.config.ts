@@ -19,9 +19,17 @@ function adminFaviconPlugin() {
   };
 }
 
+// IMPORTANT: `base` must match the Rust admin router's static-file prefix.
+// Currently the backend serves assets under "/admin/" (see src-tauri/src/admin/router.rs).
+// When the backend migrates to root-level serving, change this to "/" and also update:
+//   - index.html <base href="..."> and favicon path
+//   - src-tauri/src/admin/static_files.rs admin_asset() path trim
+//   - src-tauri/src/admin/router.rs static-file routes
+const ADMIN_BASE = process.env.VITE_ADMIN_BASE_PATH ?? "/admin/";
+
 export default defineConfig({
   root: __dirname,
-  base: "/admin/",
+  base: ADMIN_BASE,
   publicDir,
   plugins: [react(), tailwindcss(), adminFaviconPlugin()],
   resolve: {

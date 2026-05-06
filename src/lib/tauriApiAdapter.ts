@@ -124,6 +124,10 @@ settings: {
     getLatest: () => invoke<TranslationRelayPayload | null>('get_translation_relay'),
     translateAndRelay: (request: TranslationRelayRequest) => invoke<TranslationRelayPayload>('translate_and_relay', { request }),
   },
+  // NOTE: Uses raw fetch instead of Tauri invoke because there is no `get_version` command.
+  // In Combined mode the admin server is merged into the proxy port, so /admin/version works.
+  // This path MUST stay as '/admin/version' to match the Rust route in admin/router.rs.
+  // Do NOT refactor this to use ADMIN_API_PREFIX — desktop stability depends on this literal.
   async getVersion() {
     const response = await fetch('/admin/version');
     return response.json();
