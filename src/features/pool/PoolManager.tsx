@@ -24,10 +24,11 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useApiAdapter } from "@/lib/useApiAdapter";
 import { useTauriEvent } from "@/lib/useTauriEvent";
-import { type ApiEntry, type AppSettings, type Channel } from "@/types";
+import { useEvent } from "@/lib/events";
+import { type ApiEntry, type Channel } from "@/types";
 import { cn, formatResponseMs, parseResponseMs } from "@/lib/utils";
 import { TestChatDialog } from "@/components/proxy/TestChatDialog";
-import { getCatalogModel, getCatalogProviderLogo, formatTokenCount } from "@/lib/modelsCatalog";
+import { getCatalogModel, getCatalogModelExact, getCatalogProviderLogo, formatTokenCount } from "@/lib/modelsCatalog";
 import {
   DndContext,
   closestCenter,
@@ -89,6 +90,33 @@ type CatalogDisplayMeta = {
   modelMetaEn: string;
 };
 
+const zhFeatureLabels: Record<string, string> = {
+  imageGeneration: "生图",
+  imageUnderstanding: "识图",
+  audio: "音频",
+  video: "视频",
+  pdf: "PDF",
+  reasoning: "推理",
+  interleaved: "思维链",
+  toolCall: "工具调用",
+  structuredOutput: "结构输出",
+  attachment: "附件",
+  temperature: "温度",
+};
+const enFeatureLabels: Record<string, string> = {
+  imageGeneration: "Image Gen",
+  imageUnderstanding: "Vision",
+  audio: "Audio",
+  video: "Video",
+  pdf: "PDF",
+  reasoning: "Reasoning",
+  interleaved: "Reasoning Trace",
+  toolCall: "Tool Calling",
+  structuredOutput: "Struct Output",
+  attachment: "Attachment",
+  temperature: "Temperature",
+};
+
 function buildCatalogDisplayMeta(modelId: string): CatalogDisplayMeta {
   const model = getCatalogModel(modelId);
   if (!model) {
@@ -121,32 +149,6 @@ function buildCatalogDisplayMeta(modelId: string): CatalogDisplayMeta {
   const releaseDate = formatReleaseDate(model.release_date) || "";
   const context = formatTokenCount(model.limit?.context) || "";
   const output = formatTokenCount(model.limit?.output) || "";
-  const zhFeatureLabels: Record<string, string> = {
-    imageGeneration: "生图",
-    imageUnderstanding: "识图",
-    audio: "音频",
-    video: "视频",
-    pdf: "PDF",
-    reasoning: "推理",
-    interleaved: "思维链",
-    toolCall: "工具调用",
-    structuredOutput: "结构输出",
-    attachment: "附件",
-    temperature: "温度",
-  };
-  const enFeatureLabels: Record<string, string> = {
-    imageGeneration: "Image Gen",
-    imageUnderstanding: "Vision",
-    audio: "Audio",
-    video: "Video",
-    pdf: "PDF",
-    reasoning: "Reasoning",
-    interleaved: "Reasoning Trace",
-    toolCall: "Tool Calling",
-    structuredOutput: "Struct Output",
-    attachment: "Attachment",
-    temperature: "Temperature",
-  };
   const buildMeta = (
     labels: Record<string, string>,
     releaseLabel: string,
@@ -336,7 +338,7 @@ function CardBody({
   return (
     <>
       <div className="h-10 w-10 rounded-md bg-muted/40 border flex items-center justify-center shrink-0 mt-0.5">
-        <img src={catalogLogo} alt="provider" className="h-6 w-6 shrink-0" onError={(e) => {
+        <img src={catalogLogo} alt="provider" className="h-6 w-6 shrink-0" loading="lazy" onError={(e) => {
           e.currentTarget.onerror = null;
           e.currentTarget.src = `${import.meta.env.BASE_URL}logo/custom.svg`;
         }} />
@@ -443,18 +445,19 @@ function PoolEntryCard(props: {
   );
 }
 
-function AddApiDialog({ open, onOpenChange, channels, adapter }: {
-  open: boolean;
-  onOpenChange: (value: boolean) => void;
-  channels: Channel[];
-  adapter: ReturnType<typeof useApiAdapter>;
+function AddApiDialog({ open, onOpenChange, channels, channelsLoading, adapter }: {
+open: boolean;
+onOpenChange: (value: boolean) => void;
+channels: Channel[];
+channelsLoading: boolean;
+adapter: ReturnType<typeof useApiAdapter>;
 }) {
-  const { t } = useTranslation();
-  const queryClient = useQueryClient();
-  const [channelId, setChannelId] = useState("");
-  const [modelName, setModelName] = useState("");
-  const [displayName, setDisplayName] = useState("");
-  const channelOptions = channels.filter((c) => c.enabled);
+const { t } = useTranslation();
+const queryClient = useQueryClient();
+const [channelId, setChannelId] = useState("");
+const [modelName, setModelName] = useState("");
+const [displayName, setDisplayName] = useState("");
+const channelOptions = channels.filter((c) => c.enabled);
 
   const createMutation = useMutation({
     mutationFn: () => adapter.pool.create({ channelId, model: modelName, displayName: displayName || undefined, groupName: "auto" }),
@@ -487,8 +490,16 @@ function AddApiDialog({ open, onOpenChange, channels, adapter }: {
               setModelName("");
               setDisplayName("");
             }}>
-              <SelectTrigger><SelectValue placeholder={t("apiPool.selectChannel")} /></SelectTrigger>
-              <SelectContent>{channelOptions.map((channel) => <SelectItem key={channel.id} value={channel.id}>{channel.name}</SelectItem>)}</SelectContent>
+<SelectTrigger><SelectValue placeholder={t("apiPool.selectChannel")} /></SelectTrigger>
+<SelectContent>
+{channelsLoading ? (
+<SelectItem value="loading" disabled>{t("common.loading")}</SelectItem>
+) : channelOptions.length === 0 ? (
+<SelectItem value="empty" disabled>{t("apiPool.noEnabledChannels")}</SelectItem>
+) : (
+channelOptions.map((channel) => <SelectItem key={channel.id} value={channel.id}>{channel.name}</SelectItem>)
+)}
+</SelectContent>
             </Select>
           </div>
           <div className="space-y-2">
@@ -524,9 +535,8 @@ export function PoolManager() {
   const [deleteTarget, setDeleteTarget] = useState<ApiEntry | null>(null);
   const [groupFilter, setGroupFilter] = useState<string>("auto");
 
-  const { data: entries, isLoading } = useQuery({ queryKey: ["entries"], queryFn: () => adapter.pool.list() as Promise<ApiEntry[]>, refetchInterval: 5_000 });
-  const { data: channels } = useQuery({ queryKey: ["channels"], queryFn: () => adapter.channels.list() as Promise<Channel[]> });
-  const { data: settings } = useQuery({ queryKey: ["settings"], queryFn: () => adapter.settings.get() as Promise<AppSettings>, refetchInterval: 5_000 });
+   const { data: entries, isLoading } = useQuery({ queryKey: ["entries"], queryFn: () => adapter.pool.list() as Promise<ApiEntry[]>, refetchInterval: 30_000, staleTime: 30_000 });
+  const { data: channels, isLoading: channelsLoading } = useQuery({ queryKey: ["channels"], queryFn: () => adapter.channels.list() as Promise<Channel[]> });
 
   const groups = useMemo(() => {
     const values = new Set<string>(["auto"]);
@@ -540,24 +550,27 @@ export function PoolManager() {
     });
   }, [entries]);
 
-  useEffect(() => {
-    // Keep the API Management tab on the user's remembered default group selection.
-    const nextGroup = settings?.active_group || "auto";
-    setGroupFilter((current) => (groups.includes(nextGroup) ? nextGroup : current === nextGroup ? current : "auto"));
-  }, [groups, settings?.active_group]);
+   // Desktop-only: Real-time tray reprioritisation via Tauri event.
+   // This hook is a no-op on web builds (isTauriRuntime() returns false).
+   // Event: "tray-priority-changed" — triggered when user reorders entries via system tray.
+   useTauriEvent("tray-priority-changed", () => {
+     queryClient.invalidateQueries({ queryKey: ["entries"] });
+     queryClient.invalidateQueries({ queryKey: ["settings"] });
+   });
 
-  // Desktop-only: Real-time tray reprioritisation via Tauri event.
-  // This hook is a no-op on web builds (isTauriRuntime() returns false).
-  // Event: "tray-priority-changed" — triggered when user reorders entries via system tray.
-  useTauriEvent("tray-priority-changed", () => {
-    queryClient.invalidateQueries({ queryKey: ["entries"] });
-    queryClient.invalidateQueries({ queryKey: ["settings"] });
-  });
+   // Event-driven refresh: invalidate entries when the backend signals a change.
+   // This supplements the fallback refetchInterval (30s) for real-time updates.
+   useEvent("entries-changed", () => {
+     queryClient.invalidateQueries({ queryKey: ["entries"] });
+   });
 
   const catalogMap = useMemo(() => {
     const map = new Map<string, CatalogDisplayMeta>();
     for (const entry of entries || []) {
-      if (!map.has(entry.model)) map.set(entry.model, buildCatalogDisplayMeta(entry.model));
+      if (!map.has(entry.model)) {
+        const exact = getCatalogModelExact(entry.model);
+        if (exact) map.set(entry.model, buildCatalogDisplayMeta(entry.model));
+      }
     }
     return map;
   }, [entries]);
@@ -569,9 +582,11 @@ export function PoolManager() {
      return [...enabled, ...disabled];
    }, [entries]);
 
-   const displayEntries = localOrder
-     ? (localOrder.map((id) => sorted.find((e) => e.id === id)).filter(Boolean) as ApiEntry[])
-     : sorted;
+   const displayEntries = useMemo(() => {
+     return localOrder
+       ? (localOrder.map((id) => sorted.find((e) => e.id === id)).filter(Boolean) as ApiEntry[])
+       : sorted;
+   }, [localOrder, sorted]);
 
   const filteredEntries = useMemo(() => {
     const term = filterText.trim().toLowerCase();
@@ -703,9 +718,31 @@ export function PoolManager() {
     setTestResults({});
     setTestProgress(null);
     queryClient.invalidateQueries({ queryKey: ["entries"] });
-  }, [adapter.pool, entries, queryClient, testProgress]);
+  }, [adapter.pool, entries, queryClient, testProgress, groupFilter]);
 
-  if (isLoading) return <div className="p-6 text-muted-foreground">{t("common.loading")}</div>;
+  if (isLoading) {
+    return (
+      <div className="p-6 space-y-4">
+        <div className="h-6 w-48 animate-pulse bg-muted rounded" />
+        <div className="flex gap-2">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="h-6 w-16 animate-pulse bg-muted rounded" />
+          ))}
+        </div>
+        <div className="space-y-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="flex items-center gap-3 p-4 border rounded-md">
+              <div className="h-10 w-10 shrink-0 animate-pulse bg-muted rounded" />
+              <div className="flex-1 space-y-2">
+                <div className="h-4 w-1/3 animate-pulse bg-muted rounded" />
+                <div className="h-3 w-1/2 animate-pulse bg-muted rounded" />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6">
@@ -767,12 +804,12 @@ export function PoolManager() {
           )}
         </CardContent>
       </Card>
-      <AddApiDialog open={showAdd} onOpenChange={setShowAdd} channels={channels || []} adapter={adapter} />
+      <AddApiDialog open={showAdd} onOpenChange={setShowAdd} channels={channels || []} channelsLoading={channelsLoading} adapter={adapter} />
       <TestChatDialog open={!!testEntry} onOpenChange={(v) => !v && setTestEntry(null)} entry={testEntry} />
       <Dialog open={!!deleteTarget} onOpenChange={(v) => !v && setDeleteTarget(null)}>
         <DialogContent>
-          <DialogHeader><DialogTitle>{t("apiPool.deleteTitle")}</DialogTitle></DialogHeader>
-          <p className="text-sm text-muted-foreground">{t("apiPool.deleteDesc", { name: `${deleteTarget?.channel_name || "—"} / ${deleteTarget?.model || ""}` })}</p>
+          <DialogHeader><DialogTitle>{t("common.deleteTitle")}</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">{t("common.deleteWarning")}</p>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteTarget(null)}>{t("common.cancel")}</Button>
             <Button variant="destructive" disabled={deleteMutation.isPending} onClick={() => { if (deleteTarget) deleteMutation.mutate(deleteTarget.id); }}>{t("common.delete")}</Button>

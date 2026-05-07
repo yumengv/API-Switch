@@ -24,6 +24,7 @@ export function TokenPage() {
   const [newKeyName, setNewKeyName] = useState("");
   const [createdKey, setCreatedKey] = useState<AccessKey | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<AccessKey | null>(null);
 
   const { data: keys, isLoading } = useQuery({
     queryKey: ["accessKeys"],
@@ -119,16 +120,16 @@ export function TokenPage() {
                     </div>
                   </td>
                   <td className="px-4 py-3 text-muted-foreground text-xs">{formatDate(key.created_at)}</td>
-                  <td className="px-4 py-3">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7"
-                      onClick={() => deleteMutation.mutate(key.id)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                    </Button>
-                  </td>
+<td className="px-4 py-3">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7"
+          onClick={() => setDeleteTarget(key)}
+        >
+          <Trash2 className="h-3.5 w-3.5 text-destructive" />
+        </Button>
+      </td>
                 </tr>
               ))}
             </tbody>
@@ -170,38 +171,64 @@ export function TokenPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Created Key Dialog */}
-      <Dialog open={!!createdKey} onOpenChange={(v) => !v && setCreatedKey(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t("token.add")}</DialogTitle>
-            <DialogDescription>{t("token.keyWarning")}</DialogDescription>
-          </DialogHeader>
-          {createdKey && (
-            <div className="space-y-3">
-              <div className="flex items-center gap-2">
-                <code className="flex-1 text-sm bg-muted p-3 rounded font-mono break-all">
-                  {createdKey.key}
-                </code>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={() => copyKey(createdKey.key, createdKey.id)}
-                >
-                  {copiedId === createdKey.id ? (
-                    <Check className="h-4 w-4 text-green-600" />
-                  ) : (
-                    <Copy className="h-4 w-4" />
-                  )}
-                </Button>
-              </div>
+ {/* Created Key Dialog */}
+    <Dialog open={!!createdKey} onOpenChange={(v) => !v && setCreatedKey(null)}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{t("token.add")}</DialogTitle>
+          <DialogDescription>{t("token.keyWarning")}</DialogDescription>
+        </DialogHeader>
+        {createdKey && (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <code className="flex-1 text-sm bg-muted p-3 rounded font-mono break-all">
+                {createdKey.key}
+              </code>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => copyKey(createdKey.key, createdKey.id)}
+              >
+                {copiedId === createdKey.id ? (
+                  <Check className="h-4 w-4 text-green-600" />
+                ) : (
+                  <Copy className="h-4 w-4" />
+                )}
+              </Button>
             </div>
-          )}
-          <DialogFooter>
-            <Button onClick={() => setCreatedKey(null)}>{t("common.close")}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
+          </div>
+        )}
+        <DialogFooter>
+          <Button onClick={() => setCreatedKey(null)}>{t("common.close")}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    {/* Delete Confirmation Dialog */}
+    <Dialog open={!!deleteTarget} onOpenChange={(v) => !v && setDeleteTarget(null)}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{t("common.deleteTitle")}</DialogTitle>
+        </DialogHeader>
+        <p className="text-sm text-muted-foreground">{t("common.deleteWarning")}</p>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setDeleteTarget(null)}>
+            {t("common.cancel")}
+          </Button>
+          <Button
+            variant="destructive"
+            disabled={deleteMutation.isPending}
+            onClick={() => {
+              if (deleteTarget) {
+                deleteMutation.mutate(deleteTarget.id);
+              }
+            }}
+          >
+            {t("common.delete")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  </div>
+);
 }

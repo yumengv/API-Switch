@@ -99,9 +99,10 @@ fn available_entries(
 /// Rules (priority order):
 /// 1. Trim request.model and replace empty string with `auto`.
 /// 2. Case-insensitive group exact match.
-/// 3. Case-insensitive model fuzzy match where `entry.model` contains `request.model`.
-/// 4. Fallback to the AUTO group (`group_name == "auto"`).
-/// 5. Return no-provider if the AUTO group is empty.
+/// 3. Case-insensitive model exact match.
+/// 4. Case-insensitive model fuzzy match where `entry.model` contains `request.model`.
+/// 5. Fallback to the AUTO group (`group_name == "auto"`).
+/// 6. Return no-provider if the AUTO group is empty.
 pub async fn resolve(
     model: &str,
     all_entries: &[ApiEntry],
@@ -129,6 +130,17 @@ pub async fn resolve(
     }
 
     let normalized_model_lower = normalized_model.to_ascii_lowercase();
+
+    // 2.5 Exact model name match (case-insensitive)
+    let exact_model_matches: Vec<ApiEntry> = all_available
+        .iter()
+        .filter(|entry| entry.model.to_ascii_lowercase() == normalized_model_lower)
+        .cloned()
+        .collect();
+    if !exact_model_matches.is_empty() {
+        return exact_model_matches;
+    }
+
     let model_matches: Vec<ApiEntry> = all_available
         .iter()
         .filter(|entry| {
@@ -238,6 +250,24 @@ mod tests {
         let resolved = resolve("coding", &all, &all, &breakers, "custom").await;
 
         assert_eq!(resolved.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(), vec!["group-match"]);
+    }
+
+    #[tokio::test]
+    async fn exact_model_match_takes_priority_over_fuzzy_model_match() {
+        let breakers = RwLock::new(HashMap::new());
+        let all = vec![
+            // exact match (lower priority)
+            entry_with_group("fuzzy-first", "gpt-4o-plus", true, 0, "other"),
+            // exact match should win even with higher sort_index
+            entry_with_group("exact-match", "gpt-4o", true, 5, "other"),
+            // fuzzy match (higher priority)
+            entry_with_group("fuzzy-second", "gpt-4o-mini", true, 1, "other"),
+        ];
+
+        let resolved = resolve("gpt-4o", &all, &all, &breakers, "custom").await;
+
+        // Only exact match should be returned, fuzzy excluded
+        assert_eq!(resolved.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(), vec!["exact-match"]);
     }
 
     #[tokio::test]

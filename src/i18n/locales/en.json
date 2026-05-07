@@ -36,8 +36,9 @@
     "cooldownRemaining": "Cooling down, {{time}} remaining",
     "channel": "Channel",
     "model": "Model",
-    "selectChannel": "Select Channel",
-    "selectModel": "Select Model",
+"selectChannel": "Select Channel",
+"selectModel": "Select Model",
+"noEnabledChannels": "No enabled channels available",
     "modelPlaceholder": "Enter model name, e.g. gpt-4o, claude-3.5-sonnet",
     "displayName": "Display Name",
     "displayNamePlaceholder": "Leave empty to use model name",
@@ -375,7 +376,10 @@
     "noData": "No data",
     "action": "Actions",
     "doNotShowAgain": "Don't show again",
-    "failed": "Failed"
+    "failed": "Failed",
+    "deleteTitle": "Confirm Delete",
+    "deleteDesc": "Delete {{name}}?",
+    "deleteWarning": "This action cannot be undone."
   },
   "update": {
     "newVersion": "New version v{{version}} available",

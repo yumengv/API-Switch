@@ -1,18 +1,20 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense, lazy } from "react";
 import { useTranslation } from "react-i18next";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getVersion } from "@tauri-apps/api/app";
-import { ApiPoolPage } from "@/pages/ApiPoolPage";
-import { ChannelPage } from "@/pages/ChannelPage";
-import { TokenPage } from "@/pages/TokenPage";
-import { LogPage } from "@/pages/LogPage";
-import { DashboardPage } from "@/pages/DashboardPage";
-import { SettingsPage } from "@/pages/SettingsPage";
 import { WelcomeGuide } from "@/components/WelcomeGuide";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { useQuery } from "@tanstack/react-query";
 import { getSettings, updateSettings, checkUpdate, getProxyStatus } from "@/lib/api";
 import { MainShell, type MainPage } from "@/features/shell/MainShell";
-import { TranslationRelayPanel } from "@/features/translator/TranslationRelayPanel";
+
+const ApiPoolPage = lazy(() => import("@/pages/ApiPoolPage").then((m) => ({ default: m.ApiPoolPage })));
+const ChannelPage = lazy(() => import("@/pages/ChannelPage").then((m) => ({ default: m.ChannelPage })));
+const TokenPage = lazy(() => import("@/pages/TokenPage").then((m) => ({ default: m.TokenPage })));
+const LogPage = lazy(() => import("@/pages/LogPage").then((m) => ({ default: m.LogPage })));
+const DashboardPage = lazy(() => import("@/pages/DashboardPage").then((m) => ({ default: m.DashboardPage })));
+const SettingsPage = lazy(() => import("@/pages/SettingsPage").then((m) => ({ default: m.SettingsPage })));
+const TranslationRelayPanel = lazy(() => import("@/features/translator/TranslationRelayPanel").then((m) => ({ default: m.TranslationRelayPanel })));
 
 const GUIDE_BASE = "https://github.com/wang1970/API-Switch/blob/master/";
 
@@ -94,22 +96,30 @@ export default function App() {
   }, [settings]);
 
   const renderPage = () => {
-    switch (currentPage) {
-      case "apiPool":
-        return <ApiPoolPage />;
-      case "channels":
-        return <ChannelPage />;
-      case "tokens":
-        return <TokenPage />;
-      case "logs":
-        return <LogPage />;
-      case "dashboard":
-        return <DashboardPage />;
-      case "translator":
-        return <TranslationRelayPanel />;
-      case "settings":
-        return <SettingsPage />;
-    }
+    const page = (() => {
+      switch (currentPage) {
+        case "apiPool":
+          return <ApiPoolPage />;
+        case "channels":
+          return <ChannelPage />;
+        case "tokens":
+          return <TokenPage />;
+        case "logs":
+          return <LogPage />;
+        case "dashboard":
+          return <DashboardPage />;
+        case "translator":
+          return <TranslationRelayPanel />;
+        case "settings":
+          return <SettingsPage />;
+      }
+    })();
+
+    return (
+      <ErrorBoundary key={currentPage}>
+        {page}
+      </ErrorBoundary>
+    );
   };
 
   return (
@@ -122,7 +132,11 @@ export default function App() {
       onUpdateOpen={(url) => openUrl(url)}
       onNavigate={setCurrentPage}
       onOpenGuide={(path) => openUrl(GUIDE_BASE + path)}
-      renderPage={renderPage}
+      renderPage={() => (
+        <Suspense fallback={<div className="flex items-center justify-center min-h-screen">Loading...</div>}>
+          {renderPage()}
+        </Suspense>
+      )}
     >
       {settings?.show_guide !== false && (
         <WelcomeGuide

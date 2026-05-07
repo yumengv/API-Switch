@@ -162,6 +162,12 @@ for (const provider of Object.values(catalog)) {
   }
 }
 
+export function getCatalogModelExact(modelId: string): CatalogModel | null {
+  const key = modelId.trim().toLowerCase();
+  if (!key) return null;
+  return modelIndex.get(key) ?? null;
+}
+
 export function getCatalogModel(modelId: string): CatalogModel | null {
   const key = modelId.trim().toLowerCase();
   if (!key) return null;

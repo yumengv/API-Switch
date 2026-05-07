@@ -8,6 +8,7 @@ use crate::admin::{
 use crate::database::{Channel, Database, ModelInfo};
 use crate::error::AppError;
 use crate::proxy::protocol::get_adapter;
+use tauri::Emitter;
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
@@ -210,6 +211,7 @@ pub fn update_channel(db: &Database, app: Option<&tauri::AppHandle>, params: Upd
         params.notes.as_deref(),
     )?;
     if let Some(app) = app {
+        let _ = app.emit("channels-changed", ());
         crate::refresh_tray_if_enabled(app);
     }
     db.get_channel(&params.id)
@@ -218,6 +220,7 @@ pub fn update_channel(db: &Database, app: Option<&tauri::AppHandle>, params: Upd
 pub fn delete_channel(db: &Database, app: Option<&tauri::AppHandle>, id: String) -> Result<(), AppError> {
     db.delete_channel(&id)?;
     if let Some(app) = app {
+        let _ = app.emit("channels-changed", ());
         crate::refresh_tray_if_enabled(app);
     }
     Ok(())

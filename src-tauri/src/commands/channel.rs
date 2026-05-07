@@ -2,7 +2,7 @@ use crate::database::{Channel, ModelInfo};
 use crate::error::AppError;
 use crate::AppState;
 use serde::Deserialize;
-use tauri::State;
+use tauri::{Emitter, State};
 
 #[derive(Deserialize)]
 pub struct ModelCatalogMetaInput {
@@ -108,8 +108,8 @@ pub fn list_channels(state: State<'_, AppState>) -> Result<Vec<Channel>, AppErro
 }
 
 #[tauri::command]
-pub fn create_channel(state: State<'_, AppState>, params: CreateChannelParams) -> Result<Channel, AppError> {
-    channel_service::create_channel(
+pub fn create_channel(app: tauri::AppHandle, state: State<'_, AppState>, params: CreateChannelParams) -> Result<Channel, AppError> {
+    let channel = channel_service::create_channel(
         &state.db,
         channel_service::CreateChannelParams {
             name: params.name,
@@ -118,7 +118,9 @@ pub fn create_channel(state: State<'_, AppState>, params: CreateChannelParams) -
             api_key: params.api_key,
             notes: params.notes,
         },
-    )
+    )?;
+    let _ = app.emit("channels-changed", ());
+    Ok(channel)
 }
 
 #[tauri::command]
@@ -189,6 +191,8 @@ pub fn select_models(
         })
         .collect();
     state.db.sync_entries_for_channel_with_meta(&channel_id, &model_names, &catalog_meta)?;
+    let _ = app.emit("entries-changed", ());
+    let _ = app.emit("channels-changed", ());
     crate::refresh_tray_if_enabled(&app);
     Ok(())
 }

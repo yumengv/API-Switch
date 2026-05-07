@@ -2,7 +2,7 @@ use crate::database::ApiEntry;
 use crate::error::AppError;
 use crate::AppState;
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{Emitter, State};
 use crate::services::pool_service;
 
 #[derive(Serialize)]
@@ -60,6 +60,7 @@ pub fn list_entries(state: State<'_, AppState>) -> Result<Vec<ApiEntry>, AppErro
 #[tauri::command]
 pub fn toggle_entry(app: tauri::AppHandle, state: State<'_, AppState>, id: String, enabled: bool) -> Result<(), AppError> {
     pool_service::toggle_entry(&state.db, &state.failure_counts, &id, enabled)?;
+    let _ = app.emit("entries-changed", ());
     crate::refresh_tray_if_enabled(&app);
     Ok(())
 }
@@ -71,6 +72,7 @@ pub fn reorder_entries(
     ordered_ids: Vec<String>,
 ) -> Result<(), AppError> {
     pool_service::reorder_entries(&state.db, &ordered_ids)?;
+    let _ = app.emit("entries-changed", ());
     crate::refresh_tray_if_enabled(&app);
     Ok(())
 }
@@ -82,6 +84,7 @@ pub fn delete_entry(
     id: String,
 ) -> Result<(), AppError> {
     pool_service::delete_entry(&state.db, &id)?;
+    let _ = app.emit("entries-changed", ());
     crate::refresh_tray_if_enabled(&app);
     Ok(())
 }
@@ -93,6 +96,7 @@ pub fn create_entry(
     params: CreateEntryParams,
 ) -> Result<ApiEntry, AppError> {
     let entry = pool_service::create_entry(&state.db, params.into())?;
+    let _ = app.emit("entries-changed", ());
     crate::refresh_tray_if_enabled(&app);
     Ok(entry)
 }
@@ -158,6 +162,7 @@ pub fn update_entry_group(
     group_name: String,
 ) -> Result<(), AppError> {
     pool_service::update_entry_group(&state.db, &id, &group_name)?;
+    let _ = app.emit("entries-changed", ());
     crate::refresh_tray_if_enabled(&app);
     Ok(())
 }

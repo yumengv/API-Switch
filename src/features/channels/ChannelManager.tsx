@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { useQueryClient } from '@tanstack/react-query';
-import { Edit, Plus, RefreshCw, Save, Trash2, Power, PowerOff, XCircle } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
+import { Edit, Plus, RefreshCw, Save, Trash2, Power, PowerOff, XCircle, FileText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -17,6 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { cn, formatResponseMs } from '@/lib/utils';
 import { getCatalogModel, getCatalogProviderLogo, formatTokenCount } from '@/lib/modelsCatalog';
 import { useApiAdapter } from '../../lib/useApiAdapter';
+import { useEvent } from '@/lib/events';
 import { getChannelErrorMessage } from './channelErrors';
 import type { Channel, CreateChannelParams, ModelInfo, UpdateChannelParams, ModelCatalogMetaUpdate } from './types';
 
@@ -161,39 +163,45 @@ function sortChannels(items: Channel[]): Channel[] {
 }
 
 export const ChannelManager: React.FC = () => {
+  const { t } = useTranslation();
   const api = useApiAdapter();
-  const [channels, setChannels] = useState<Channel[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [editing, setEditing] = useState<Channel | null>(null);
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [testingChannelId, setTestingChannelId] = useState<string | null>(null);
-  const [testResults, setTestResults] = useState<Record<string, string>>({});
-
-  async function loadChannels() {
-    setLoading(true);
-    setError(null);
-    try {
-      const items = await api.channels.list();
-      setChannels(sortChannels(items));
-    } catch (err) {
-      setError(getChannelErrorMessage(err, '渠道列表加载失败'));
-    } finally {
-      setLoading(false);
-    }
-  }
-
   const queryClient = useQueryClient();
+  const { data: rawChannels, isLoading: loading, error: queryError } = useQuery({
+    queryKey: ["channels"],
+    queryFn: () => api.channels.list() as Promise<Channel[]>,
+  });
+  const { data: entries } = useQuery({
+    queryKey: ["entries"],
+    queryFn: () => api.pool.list(),
+  });
+  const channels = useMemo(() => sortChannels(rawChannels ?? []), [rawChannels]);
+  const entryCountMap = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const entry of entries ?? []) {
+      map.set(entry.channel_id, (map.get(entry.channel_id) ?? 0) + 1);
+    }
+    return map;
+  }, [entries]);
+const [editing, setEditing] = useState<Channel | null>(null);
+const [dialogOpen, setDialogOpen] = useState(false);
+const [expandedId, setExpandedId] = useState<string | null>(null);
+const [testingChannelId, setTestingChannelId] = useState<string | null>(null);
+const [testResults, setTestResults] = useState<Record<string, string>>({});
+const [deleteTarget, setDeleteTarget] = useState<Channel | null>(null);
+
+  const error = queryError ? getChannelErrorMessage(queryError, '渠道列表加载失败') : null;
+
+  useEvent("channels-changed", () => {
+    queryClient.invalidateQueries({ queryKey: ["channels"] });
+  });
+
+  useEvent("entries-changed", () => {
+    queryClient.invalidateQueries({ queryKey: ["channels"] });
+  });
 
   const refreshChannels = async () => {
-    queryClient.invalidateQueries({ queryKey: ["channels"] });
-    await loadChannels();
+    await queryClient.refetchQueries({ queryKey: ["channels"] });
   };
-
-  useEffect(() => {
-    loadChannels();
-  }, []);
 
   const openCreate = () => {
     setEditing(null);
@@ -205,21 +213,23 @@ export const ChannelManager: React.FC = () => {
     setDialogOpen(true);
   };
 
-  const handleDelete = async (channel: Channel) => {
-    if (!window.confirm(`确定删除渠道 ${channel.name}？关联 API 池条目也会被删除。`)) {
-      return;
+const handleDelete = (channel: Channel) => {
+  setDeleteTarget(channel);
+};
+
+const confirmDeleteChannel = async () => {
+  if (!deleteTarget) return;
+  try {
+    await api.channels.delete(deleteTarget.id);
+    if (expandedId === deleteTarget.id) {
+      setExpandedId(null);
     }
-    setError(null);
-    try {
-      await api.channels.delete(channel.id);
-      if (expandedId === channel.id) {
-        setExpandedId(null);
-      }
-      await loadChannels();
-    } catch (err) {
-      setError(getChannelErrorMessage(err, '删除渠道失败'));
-    }
-  };
+    await queryClient.invalidateQueries({ queryKey: ["channels"] });
+    setDeleteTarget(null);
+  } catch (err) {
+    toast.error(getChannelErrorMessage(err, '删除渠道失败'));
+  }
+};
 
   const testAllChannels = async () => {
     if (!channels) return;
@@ -243,7 +253,7 @@ export const ChannelManager: React.FC = () => {
       await new Promise((r) => setTimeout(r, 200));
     }
     setTestingChannelId(null);
-    await loadChannels();
+    await queryClient.invalidateQueries({ queryKey: ["channels"] });
     setTestResults({});
   };
 
@@ -294,15 +304,92 @@ export const ChannelManager: React.FC = () => {
                   </button>
                 </div>
               </th>
-              <th className="px-4 py-3 text-left font-medium">模型数</th>
+              <th className="px-4 py-3 text-center font-medium">模型</th>
               <th className="px-4 py-3 text-right font-medium">操作</th>
             </tr>
           </thead>
           <tbody>
-            {loading ? (
-              <tr>
-                <td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">加载中...</td>
-              </tr>
+{loading ? (
+<>
+<tr>
+<td className="px-4 py-3">
+<div className="h-4 w-32 animate-pulse bg-muted rounded" />
+</td>
+<td className="px-4 py-3">
+<div className="h-5 w-16 animate-pulse bg-muted rounded" />
+</td>
+<td className="px-4 py-3">
+<div className="h-3 w-48 animate-pulse bg-muted rounded" />
+</td>
+<td className="px-4 py-3">
+<div className="h-5 w-12 animate-pulse bg-muted rounded-full" />
+</td>
+<td className="px-4 py-3">
+<div className="h-3.5 w-3 animate-pulse bg-muted rounded" />
+</td>
+<td className="px-4 py-3">
+<div className="h-3 w-10 animate-pulse bg-muted rounded" />
+</td>
+<td className="px-4 py-3">
+<div className="flex justify-end gap-1">
+<div className="h-7 w-7 animate-pulse bg-muted rounded" />
+<div className="h-7 w-12 animate-pulse bg-muted rounded" />
+</div>
+</td>
+</tr>
+<tr>
+<td className="px-4 py-3">
+<div className="h-4 w-28 animate-pulse bg-muted rounded" />
+</td>
+<td className="px-4 py-3">
+<div className="h-5 w-14 animate-pulse bg-muted rounded" />
+</td>
+<td className="px-4 py-3">
+<div className="h-3 w-44 animate-pulse bg-muted rounded" />
+</td>
+<td className="px-4 py-3">
+<div className="h-5 w-12 animate-pulse bg-muted rounded-full" />
+</td>
+<td className="px-4 py-3">
+<div className="h-3.5 w-3 animate-pulse bg-muted rounded" />
+</td>
+<td className="px-4 py-3">
+<div className="h-3 w-10 animate-pulse bg-muted rounded" />
+</td>
+<td className="px-4 py-3">
+<div className="flex justify-end gap-1">
+<div className="h-7 w-7 animate-pulse bg-muted rounded" />
+<div className="h-7 w-12 animate-pulse bg-muted rounded" />
+</div>
+</td>
+</tr>
+<tr>
+<td className="px-4 py-3">
+<div className="h-4 w-36 animate-pulse bg-muted rounded" />
+</td>
+<td className="px-4 py-3">
+<div className="h-5 w-18 animate-pulse bg-muted rounded" />
+</td>
+<td className="px-4 py-3">
+<div className="h-3 w-52 animate-pulse bg-muted rounded" />
+</td>
+<td className="px-4 py-3">
+<div className="h-5 w-12 animate-pulse bg-muted rounded-full" />
+</td>
+<td className="px-4 py-3">
+<div className="h-3.5 w-3 animate-pulse bg-muted rounded" />
+</td>
+<td className="px-4 py-3">
+<div className="h-3 w-10 animate-pulse bg-muted rounded" />
+</td>
+<td className="px-4 py-3">
+<div className="flex justify-end gap-1">
+<div className="h-7 w-7 animate-pulse bg-muted rounded" />
+<div className="h-7 w-12 animate-pulse bg-muted rounded" />
+</div>
+</td>
+</tr>
+</>
             ) : channels.length === 0 ? (
               <tr>
                 <td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">暂无渠道，请先添加渠道。</td>
@@ -319,6 +406,7 @@ export const ChannelManager: React.FC = () => {
                     onChanged={refreshChannels}
                     testingChannelId={testingChannelId}
                     testResults={testResults}
+                    entryCountMap={entryCountMap}
                   />
 
               ))
@@ -327,15 +415,25 @@ export const ChannelManager: React.FC = () => {
         </table>
       </div>
 
-      <ChannelEditorDialog
-        open={dialogOpen}
-        channel={editing}
-        onOpenChange={setDialogOpen}
-        onSaved={refreshChannels}
-      />
-      </div>
-    </div>
-  );
+<ChannelEditorDialog
+  open={dialogOpen}
+  channel={editing}
+  onOpenChange={setDialogOpen}
+  onSaved={refreshChannels}
+/>
+<Dialog open={!!deleteTarget} onOpenChange={(v) => !v && setDeleteTarget(null)}>
+  <DialogContent>
+<DialogHeader><DialogTitle>{t("common.deleteTitle")}</DialogTitle></DialogHeader>
+<p className="text-sm text-muted-foreground">{t("common.deleteWarning")}</p>
+    <DialogFooter>
+      <Button variant="outline" onClick={() => setDeleteTarget(null)}>{t("common.cancel")}</Button>
+      <Button variant="destructive" disabled={false} onClick={confirmDeleteChannel}>{t("common.delete")}</Button>
+    </DialogFooter>
+  </DialogContent>
+</Dialog>
+</div>
+</div>
+);
 };
 
 function ChannelRow({
@@ -347,6 +445,7 @@ function ChannelRow({
   onChanged,
   testingChannelId,
   testResults,
+  entryCountMap,
 }: {
   channel: Channel;
   expanded: boolean;
@@ -356,6 +455,7 @@ function ChannelRow({
   onChanged: () => Promise<void>;
   testingChannelId?: string | null;
   testResults?: Record<string, string>;
+  entryCountMap?: Map<string, number>;
 }) {
   const api = useApiAdapter();
   const [saving, setSaving] = useState(false);
@@ -432,7 +532,12 @@ function ChannelRow({
       <tr className="border-b border-border hover:bg-muted/30 cursor-pointer" onClick={onToggle}>
         <td className="min-w-0 px-4 py-3">
           <div className="max-w-full text-left">
-            <div className="truncate font-medium">{channel.name}</div>
+            <div className="truncate font-medium flex items-center gap-1">
+              {channel.name}
+              {channel.notes && (
+                <FileText className="h-3 w-3 text-muted-foreground shrink-0" title={channel.notes} />
+              )}
+            </div>
           </div>
         </td>
         <td className="px-4 py-3">
@@ -467,23 +572,17 @@ function ChannelRow({
             return <span className="text-red-500" title="未测速"><XCircle className="h-3.5 w-3.5" /></span>;
           })()}
         </td>
-        <td className="px-4 py-3 whitespace-nowrap">{selectedModels.length} / {availableModels.length}</td>
+        <td className="px-4 py-3 whitespace-nowrap text-center">{entryCountMap?.get(channel.id) ?? 0} / {availableModels.length}</td>
         <td className="px-4 py-3">
           <div className="flex justify-end gap-1">
             <Button variant="ghost" size="icon" className="h-8 w-8" onClick={(event) => { event.stopPropagation(); onEdit(); }} title="编辑">
               <Edit className="h-4 w-4" />
             </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-8"
-              onClick={(event) => { event.stopPropagation(); toggleEnabled(); }}
-              disabled={saving}
-            >
-              {channel.enabled ? '禁用' : '启用'}
+            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={(event) => { event.stopPropagation(); toggleEnabled(); }} disabled={saving} title={channel.enabled ? '禁用' : '启用'}>
+              {channel.enabled ? <PowerOff className="h-4 w-4" /> : <Power className="h-4 w-4" />}
             </Button>
-            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={(event) => { event.stopPropagation(); onDelete(); }} title="删除">
-              <Trash2 className="h-4 w-4 text-destructive" />
+            <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={(event) => { event.stopPropagation(); onDelete(); }} title="删除">
+              <Trash2 className="h-4 w-4" />
             </Button>
           </div>
         </td>
@@ -528,24 +627,24 @@ function ChannelEditorDialog({
   const [endpointVerified, setEndpointVerified] = useState(false);
   const [endpointVerificationMessage, setEndpointVerificationMessage] = useState<string | null>(null);
   const [saveStage, setSaveStage] = useState<string | null>(null);
-  const [modelSelectionDirty, setModelSelectionDirty] = useState(false);
+  
   const probeSeqRef = React.useRef(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const isEdit = !!channel;
 
-  useEffect(() => {
-    if (!open) return;
-    setError(null);
-    setAvailableModels([]);
-    setSelectedModels([]);
-    setModelSearch('');
-    setShowApiKey(false);
-    setEndpointVerified(false);
-    setEndpointVerificationMessage(null);
-    setModelSelectionDirty(false);
-    setModelsValidated(!!channel && ((channel.available_models?.length || 0) > 0));
+useEffect(() => {
+  if (!open) return;
+  setError(null);
+  setSaving(false);
+  setAvailableModels([]);
+  setSelectedModels([]);
+  setModelSearch('');
+  setShowApiKey(false);
+  setEndpointVerified(false);
+  setEndpointVerificationMessage(null);
+  setModelsValidated(!!channel && ((channel.available_models?.length || 0) > 0));
     if (channel) {
       setForm(channelToForm(channel));
       setAvailableModels(channel.available_models || []);
@@ -645,82 +744,78 @@ function ChannelEditorDialog({
     return Array.from(selected);
   }, [api]);
 
-  const handleFetchModels = async () => {
-    if (probingUrl) {
-      setError('URL 还在检测中，请稍后再试');
-      return;
-    }
+const handleFetchModels = async () => {
+  if (probingUrl) {
+    setError('URL 还在检测中，请稍后再试');
+    return;
+  }
 
-    let probe = urlProbe;
-    if (!probe) {
-      setProbingUrl(true);
-      try {
-        probe = await api.channels.probeUrl(form.base_url.trim()) as { reachable: boolean; latency_ms: number; status_code?: number; detected_type?: string; message: string };
-        setUrlProbe(probe);
-      } catch {
-        probe = { reachable: false, status_code: undefined, latency_ms: 0, detected_type: undefined, message: 'Probe failed' };
-        setUrlProbe(probe);
-      } finally {
-        setProbingUrl(false);
-      }
-    }
-
-    if (!probe.reachable) {
-      setError(`URL 不可达: ${probe.message}`);
-      return;
-    }
-
-    setFetchingModels(true);
-    setModelsValidated(false);
-    setError(null);
+  let probe = urlProbe;
+  if (!probe) {
+    setProbingUrl(true);
     try {
-      const result = await api.channels.fetchModelsDirect(form.api_type, form.base_url, form.api_key, false);
-      setForm((prev) => ({
-        ...prev,
-        api_type: result.detected_type,
-        base_url: result.corrected_base_url || prev.base_url,
-      }));
-      setEndpointVerified(true);
-      setEndpointVerificationMessage(`端点校对通过，已识别为 ${result.detected_type.toUpperCase()}`);
-      setModelsValidated(true);
-      const normalizedModels: ModelInfo[] = (result.models || []).map((item, index) => ({
-        id: String(item.id ?? item.name ?? index),
-        name: String(item.name ?? ''),
-        owned_by: typeof item.owned_by === 'string' ? item.owned_by : undefined,
-      })).filter((item) => item.name);
-      setAvailableModels(normalizedModels);
-      const nextSelected = await autoSelectModels(normalizedModels, channel?.id);
-      setSelectedModels(nextSelected);
-      setModelSelectionDirty(!channel && nextSelected.length > 0);
-    } catch (err) {
-      setError(getChannelErrorMessage(err, '获取模型列表失败'));
+      probe = await api.channels.probeUrl(form.base_url.trim()) as { reachable: boolean; latency_ms: number; status_code?: number; detected_type?: string; message: string };
+      setUrlProbe(probe);
+    } catch {
+      probe = { reachable: false, status_code: undefined, latency_ms: 0, detected_type: undefined, message: 'Probe failed' };
+      setUrlProbe(probe);
     } finally {
-      setFetchingModels(false);
+      setProbingUrl(false);
     }
-  };
+  }
 
-  const toggleModel = (modelName: string) => {
-    setModelSelectionDirty(true);
-    setSelectedModels((prev) =>
-      prev.includes(modelName)
-        ? prev.filter((m) => m !== modelName)
-        : [...prev, modelName],
-    );
-  };
+  if (!probe.reachable) {
+    setError(`URL 不可达：${probe.message}`);
+    return;
+  }
 
-  const selectAllFiltered = () => {
-    setModelSelectionDirty(true);
-    const filtered = modelSearch
-      ? availableModels.filter((m) => m.name.toLowerCase().includes(modelSearch.toLowerCase()))
-      : availableModels;
-    const names = filtered.map((m) => m.name);
-    setSelectedModels((prev) => Array.from(new Set([...prev, ...names])));
-  };
+  setFetchingModels(true);
+  setModelsValidated(false);
+  setError(null);
+  try {
+    const result = await api.channels.fetchModelsDirect(form.api_type, form.base_url, form.api_key, false);
+    setForm((prev) => ({
+      ...prev,
+      api_type: result.detected_type,
+      base_url: result.corrected_base_url || prev.base_url,
+    }));
+    setEndpointVerified(true);
+    setEndpointVerificationMessage(`端点校对通过，已识别为 ${result.detected_type.toUpperCase()}`);
+    setModelsValidated(true);
+    const normalizedModels: ModelInfo[] = (result.models || []).map((item, index) => ({
+      id: String(item.id ?? item.name ?? index),
+      name: String(item.name ?? ''),
+      owned_by: typeof item.owned_by === 'string' ? item.owned_by : undefined,
+    })).filter((item) => item.name);
+    setAvailableModels(normalizedModels);
+    const nextSelected = await autoSelectModels(normalizedModels, channel?.id);
+    setSelectedModels(nextSelected);
+  } catch (err) {
+    setError(getChannelErrorMessage(err, '获取模型列表失败'));
+  } finally {
+    setFetchingModels(false);
+  }
+};
 
-  const clearAllSelected = () => {
-    setModelSelectionDirty(true);
-    setSelectedModels([]);
-  };
+const toggleModel = (modelName: string) => {
+  setSelectedModels((prev) =>
+    prev.includes(modelName)
+      ? prev.filter((m) => m !== modelName)
+      : [...prev, modelName],
+  );
+};
+
+const selectAllFiltered = () => {
+  const filtered = modelSearch
+    ? availableModels.filter((m) => m.name.toLowerCase().includes(modelSearch.toLowerCase()))
+    : availableModels;
+  const names = filtered.map((m) => m.name);
+  setSelectedModels((prev) => Array.from(new Set([...prev, ...names])));
+};
+
+const clearAllSelected = () => {
+  setSelectedModels([]);
+};
 
   const handleSave = async () => {
     if (saving || fetchingModels) return;
@@ -746,6 +841,7 @@ function ChannelEditorDialog({
           base_url: form.base_url,
           api_key: form.api_key,
           notes: form.notes,
+          enabled: form.enabled,
         };
         await api.channels.update(params);
       } else {
@@ -771,8 +867,8 @@ function ChannelEditorDialog({
         }
       }
 
-      const shouldSyncModels = !!channelId && (!isEdit || modelSelectionDirty);
-      if (shouldSyncModels && channelId) {
+      // Always sync selected models to handle additions and deletions reliably.
+      if (channelId) {
         try {
           setSaveStage('正在同步所选模型...');
           await Promise.race([

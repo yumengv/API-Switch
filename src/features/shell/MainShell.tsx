@@ -1,4 +1,4 @@
-import { BarChart3, BookOpen, ExternalLink, FileText, KeyRound, Languages, Layers, Power, Route, Settings } from 'lucide-react';
+import { BarChart3, BookOpen, ExternalLink, FileText, KeyRound, Layers, Power, Route, Settings } from 'lucide-react';
 
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
@@ -16,7 +16,6 @@ const NAV_ITEMS: { key: MainPage; icon: typeof Layers; labelKey: string; externa
   { key: 'tokens', icon: KeyRound, labelKey: 'nav.tokens' },
   { key: 'logs', icon: FileText, labelKey: 'nav.logs' },
   { key: 'dashboard', icon: BarChart3, labelKey: 'nav.dashboard' },
-  { key: 'translator', icon: Languages, labelKey: 'nav.translator' },
   { key: 'settings', icon: Settings, labelKey: 'nav.settings' },
   { key: 'guide', icon: BookOpen, labelKey: 'nav.guide', externalLang: { zh: 'GUIDE_CN.md', en: 'GUIDE.md' } },
 ];

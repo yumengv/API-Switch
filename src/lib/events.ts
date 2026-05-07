@@ -19,7 +19,7 @@ import { isTauriRuntime } from "./useApiAdapter";
  * Supported event names for the application.
  * Extend this type when adding new events.
  */
-export type EventName = "new-usage-log" | "channel-updated" | "settings-changed";
+export type EventName = "new-usage-log" | "entries-changed" | "channels-changed" | "channel-updated" | "settings-changed";
 
 /**
  * Event handler callback type.

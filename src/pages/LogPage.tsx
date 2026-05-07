@@ -60,12 +60,112 @@ export function LogPage() {
     queryFn: () => getUsageLogs(filter),
   });
 
-  const logs = result?.items || [];
-  const totalPrompt = logs.reduce((sum, log) => sum + log.prompt_tokens, 0);
-  const totalCompletion = logs.reduce((sum, log) => sum + log.completion_tokens, 0);
-  const successCount = logs.filter((log) => log.success).length;
+const logs = result?.items || [];
+const totalPrompt = logs.reduce((sum, log) => sum + log.prompt_tokens, 0);
+const totalCompletion = logs.reduce((sum, log) => sum + log.completion_tokens, 0);
+const successCount = logs.filter((log) => log.success).length;
 
-  const toggleErrorsOnly = (checked: boolean) => {
+if (isLoading) {
+  return (
+    <div className="p-6">
+      <div className="flex items-center justify-between mb-6">
+        <div className="h-6 w-32 animate-pulse bg-muted rounded" />
+        <div className="flex items-center gap-2">
+          <div className="h-4 w-12 animate-pulse bg-muted rounded" />
+          <div className="h-4 w-12 animate-pulse bg-muted rounded" />
+        </div>
+      </div>
+
+      {/* Stats Cards Skeleton */}
+      <div className="grid gap-4 md:grid-cols-4 mb-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <Card key={i}>
+            <CardContent className="p-4">
+              <div className="h-4 w-24 animate-pulse bg-muted rounded mb-2" />
+              <div className="h-8 w-16 animate-pulse bg-muted rounded" />
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      {/* Table Skeleton */}
+      <div className="rounded-md border overflow-x-hidden">
+        <table className="w-full table-fixed text-sm">
+          <colgroup>
+            <col className="w-40" />
+            <col className="w-28" />
+            <col className="w-24" />
+            <col />
+            <col className="w-28" />
+            <col className="w-16" />
+            <col className="w-16" />
+            <col className="w-20" />
+          </colgroup>
+          <thead>
+            <tr className="border-b bg-muted/50">
+              <th className="px-3 py-2 text-left font-medium whitespace-nowrap">
+                <div className="h-4 w-20 animate-pulse bg-muted rounded" />
+              </th>
+              <th className="px-3 py-2 text-left font-medium truncate">
+                <div className="h-4 w-16 animate-pulse bg-muted rounded" />
+              </th>
+              <th className="px-3 py-2 text-left font-medium truncate">
+                <div className="h-4 w-12 animate-pulse bg-muted rounded" />
+              </th>
+              <th className="px-3 py-2 text-left font-medium truncate">
+                <div className="h-4 w-24 animate-pulse bg-muted rounded" />
+              </th>
+              <th className="px-3 py-2 text-left font-medium whitespace-nowrap">
+                <div className="h-4 w-16 animate-pulse bg-muted rounded" />
+              </th>
+              <th className="px-3 py-2 text-right font-medium">
+                <div className="h-4 w-12 animate-pulse bg-muted rounded ml-auto" />
+              </th>
+              <th className="px-3 py-2 text-right font-medium">
+                <div className="h-4 w-12 animate-pulse bg-muted rounded ml-auto" />
+              </th>
+              <th className="px-3 py-2 text-left font-medium whitespace-nowrap">
+                <div className="h-4 w-14 animate-pulse bg-muted rounded" />
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {Array.from({ length: 5 }).map((_, i) => (
+              <tr key={i} className="border-b">
+                <td className="px-3 py-2 whitespace-nowrap">
+                  <div className="h-4 w-32 animate-pulse bg-muted rounded" />
+                </td>
+                <td className="px-3 py-2 min-w-0">
+                  <div className="h-4 w-20 animate-pulse bg-muted rounded" />
+                </td>
+                <td className="px-3 py-2 min-w-0">
+                  <div className="h-4 w-16 animate-pulse bg-muted rounded" />
+                </td>
+                <td className="px-3 py-2 font-mono text-xs min-w-0">
+                  <div className="h-4 w-24 animate-pulse bg-muted rounded" />
+                </td>
+                <td className="px-3 py-2 whitespace-nowrap">
+                  <div className="h-4 w-28 animate-pulse bg-muted rounded" />
+                </td>
+                <td className="px-3 py-2 text-right">
+                  <div className="h-4 w-10 animate-pulse bg-muted rounded ml-auto" />
+                </td>
+                <td className="px-3 py-2 text-right">
+                  <div className="h-4 w-10 animate-pulse bg-muted rounded ml-auto" />
+                </td>
+                <td className="px-3 py-2 whitespace-nowrap">
+                  <div className="h-4 w-12 animate-pulse bg-muted rounded" />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+const toggleErrorsOnly = (checked: boolean) => {
     setErrorsOnly(checked);
     setFilter((f) => ({
       ...f,
