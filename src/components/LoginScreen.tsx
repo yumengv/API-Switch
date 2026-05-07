@@ -1,32 +1,44 @@
 import { useState } from "react";
 import { Power } from "lucide-react";
+import { login, setToken, clearToken, type AdminHttpError } from "@/lib/webAuth";
 
-const ADMIN_PREFIX = "/admin";
+function formatSeconds(seconds?: number): string {
+  if (!seconds || seconds <= 0) return "稍后再试";
+  if (seconds < 60) return `${seconds} 秒后再试`;
+  return `${Math.ceil(seconds / 60)} 分钟后再试`;
+}
 
-export function LoginScreen({ onAuthenticated }: { onAuthenticated: (token: string) => void }) {
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (!error || !(error instanceof Error)) return fallback;
+  const adminError = error as AdminHttpError;
+  if (adminError.isRateLimitError) return `登录尝试过于频繁，请在 ${formatSeconds(adminError.retryAfterSeconds)}。`;
+  if (adminError.code === "INVALID_CREDENTIALS") {
+    if (typeof adminError.remainingAttempts === "number") {
+      return `用户名或密码错误，还可尝试 ${adminError.remainingAttempts} 次。`;
+    }
+    return "用户名或密码错误。";
+  }
+  if (adminError.isAuthError) return "登录已失效，请重新登录。";
+  return adminError.message || fallback;
+}
+
+export function LoginScreen({ onAuthenticated }: { onAuthenticated: () => void }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
     setError(null);
     setSubmitting(true);
     try {
-      const res = await fetch(`${ADMIN_PREFIX}/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body?.error?.message || `HTTP ${res.status}`);
-      }
-      const data = await res.json();
-      onAuthenticated(data.token);
+      const response = await login(username, password);
+      setToken(response.token);
+      onAuthenticated();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "登录失败");
+      clearToken();
+      setError(getErrorMessage(err, "登录失败"));
     } finally {
       setSubmitting(false);
     }
@@ -38,8 +50,8 @@ export function LoginScreen({ onAuthenticated }: { onAuthenticated: (token: stri
         <div className="mb-6 flex items-center gap-3">
           <Power className="h-6 w-6 text-primary" />
           <div>
-            <h1 className="text-xl font-semibold">API Switch</h1>
-            <p className="mt-1 text-sm text-muted-foreground">Web Admin 登录</p>
+            <h1 className="text-xl font-semibold">API Switch Web Admin</h1>
+            <p className="mt-1 text-sm text-muted-foreground">使用 Web 管理账号登录</p>
           </div>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -48,7 +60,7 @@ export function LoginScreen({ onAuthenticated }: { onAuthenticated: (token: stri
             <input
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
               value={username}
-              onChange={(e) => setUsername(e.target.value)}
+              onChange={(event) => setUsername(event.target.value)}
               autoComplete="username"
             />
           </label>
@@ -57,7 +69,7 @@ export function LoginScreen({ onAuthenticated }: { onAuthenticated: (token: stri
             <input
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(event) => setPassword(event.target.value)}
               type="password"
               autoComplete="current-password"
             />
