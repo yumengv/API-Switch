@@ -2,7 +2,7 @@ use super::circuit_breaker::CircuitBreaker;
 use super::handlers;
 use super::responses_handler;
 use crate::database::{AppSettings, Database};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::Router;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -28,6 +28,7 @@ pub struct ProxyState {
     pub failure_counts: Arc<RwLock<HashMap<String, u32>>>, // Entry ID -> consecutive failure count
     pub app_handle: tauri::AppHandle,
     pub http_client: reqwest::Client,
+    pub response_store: Arc<RwLock<HashMap<String, serde_json::Value>>>,
 }
 
 /// HTTP proxy server
@@ -62,6 +63,7 @@ impl ProxyServer {
                 .gzip(true)
                 .build()
                 .expect("failed to build proxy HTTP client"),
+            response_store: Arc::new(RwLock::new(HashMap::new())),
         };
 
         Self {
@@ -117,6 +119,11 @@ impl ProxyServer {
             .route(
                 "/v1/responses",
                 post(responses_handler::handle_responses),
+            )
+            .route(
+                "/v1/responses/:response_id",
+                get(responses_handler::get_response)
+                    .delete(responses_handler::delete_response),
             )
             .layer(cors)
             .with_state(self.state.clone());

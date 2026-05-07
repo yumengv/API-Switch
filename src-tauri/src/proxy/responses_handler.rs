@@ -580,6 +580,14 @@ pub async fn handle_responses(
                                 let input_tokens = usage.get("prompt_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
                                 let output_tokens = usage.get("completion_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
                                 let total_tokens = usage.get("total_tokens").and_then(|v| v.as_i64()).unwrap_or(input_tokens + output_tokens);
+                                let cached_tokens = usage.get("prompt_tokens_details")
+                                    .and_then(|d| d.get("cached_tokens"))
+                                    .and_then(|v| v.as_i64())
+                                    .unwrap_or(0);
+                                let reasoning_tokens = usage.get("completion_tokens_details")
+                                    .and_then(|d| d.get("reasoning_tokens"))
+                                    .and_then(|v| v.as_i64())
+                                    .unwrap_or(0);
 
                                 collected_frames.push(sse_line(&json!({
                                     "type": "response.completed",
@@ -606,9 +614,9 @@ pub async fn handle_responses(
                                         "truncation": req_body.get("truncation").unwrap_or(&json!("disabled")),
                                         "usage": {
                                             "input_tokens": input_tokens,
-                                            "input_tokens_details": { "cached_tokens": 0 },
+                                            "input_tokens_details": { "cached_tokens": cached_tokens },
                                             "output_tokens": output_tokens,
-                                            "output_tokens_details": { "reasoning_tokens": 0 },
+                                            "output_tokens_details": { "reasoning_tokens": reasoning_tokens },
                                             "total_tokens": total_tokens
                                         },
                                         "user": req_body.get("user"),
@@ -789,6 +797,14 @@ pub async fn handle_responses(
             let input_tokens = usage.get("prompt_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
             let output_tokens = usage.get("completion_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
             let total_tokens = usage.get("total_tokens").and_then(|v| v.as_i64()).unwrap_or(input_tokens + output_tokens);
+            let cached_tokens = usage.get("prompt_tokens_details")
+                .and_then(|d| d.get("cached_tokens"))
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            let reasoning_tokens = usage.get("completion_tokens_details")
+                .and_then(|d| d.get("reasoning_tokens"))
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
 
             let completed_response = json!({
                 "id": &response_id,
@@ -813,9 +829,9 @@ pub async fn handle_responses(
                 "truncation": req_body.get("truncation").unwrap_or(&json!("disabled")),
                 "usage": {
                     "input_tokens": input_tokens,
-                    "input_tokens_details": { "cached_tokens": 0 },
+                    "input_tokens_details": { "cached_tokens": cached_tokens },
                     "output_tokens": output_tokens,
-                    "output_tokens_details": { "reasoning_tokens": 0 },
+                    "output_tokens_details": { "reasoning_tokens": reasoning_tokens },
                     "total_tokens": total_tokens
                 },
                 "user": req_body.get("user"),
@@ -885,4 +901,32 @@ fn build_sse_response(frames: Vec<Bytes>) -> Result<axum::response::Response, Pr
         .map_err(|e| ProxyError::Internal(format!("Failed to build response: {e}")))?;
 
     Ok(response)
+}
+
+// ─── Response Store Helpers ───────────────────────────────────────────
+
+/// POST /v1/responses/:id — Get a stored response (stub, proxy doesn't persist)
+pub async fn get_response(
+    axum::extract::Path(response_id): axum::extract::Path<String>,
+) -> axum::response::Response {
+    axum::Json(json!({
+        "error": {
+            "message": format!("Response '{}' not found. This proxy does not persist responses.", response_id),
+            "type": "not_found_error",
+            "code": "response_not_found"
+        }
+    }))
+    .into_response()
+}
+
+/// DELETE /v1/responses/:id — Delete a stored response (stub, proxy doesn't persist)
+pub async fn delete_response(
+    axum::extract::Path(response_id): axum::extract::Path<String>,
+) -> axum::response::Response {
+    axum::Json(json!({
+        "id": response_id,
+        "object": "response",
+        "deleted": true
+    }))
+    .into_response()
 }
