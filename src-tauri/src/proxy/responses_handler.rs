@@ -14,6 +14,7 @@ use axum::extract::State;
 use axum::http::{header, StatusCode};
 use axum::response::IntoResponse;
 use bytes::Bytes;
+use futures::StreamExt;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -280,13 +281,52 @@ pub async fn handle_responses(
     let req_body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse JSON: {e}")))?;
 
+    // Validate unsupported input types (file/image)
+    if let Some(items) = req_body.get("input").and_then(|v| v.as_array()) {
+        for item in items {
+            if let Some(typ) = item.get("type").and_then(|v| v.as_str()) {
+                if matches!(typ, "input_image" | "input_file") {
+                    return Ok(axum::Json(json!({
+                        "error": {
+                            "message": format!("Unsupported input type '{}'. Only text, message, function_call, and function_call_output are supported.", typ),
+                            "type": "invalid_request_error",
+                            "code": "unsupported_input_type"
+                        }
+                    }))
+                    .into_response());
+                }
+            }
+        }
+    }
+
+    // Validate unsupported tool types (web_search, file_search, code_interpreter)
+    if let Some(tools) = req_body.get("tools").and_then(|v| v.as_array()) {
+        for tool in tools {
+            if let Some(typ) = tool.get("type").and_then(|v| v.as_str()) {
+                if !matches!(typ, "function") {
+                    return Ok(axum::Json(json!({
+                        "error": {
+                            "message": format!("Unsupported tool type '{}'. Only 'function' type tools are supported.", typ),
+                            "type": "invalid_request_error",
+                            "code": "unsupported_tool_type"
+                        }
+                    }))
+                    .into_response());
+                }
+            }
+        }
+    }
+
+    // 3. Determine stream mode BEFORE building chat body
+    let is_stream = req_body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
+
     let response_id = format!("resp_{}", Uuid::new_v4().to_string().replace('-', ""));
     let model = req_body
         .get("model")
         .and_then(|m| m.as_str())
         .unwrap_or("auto");
 
-    // 3. Convert to Chat Completions format
+    // 4. Convert to Chat Completions format
     let messages = input_to_messages(
         req_body.get("input").unwrap_or(&Value::Null),
         req_body.get("instructions").and_then(|v| v.as_str()),
@@ -295,7 +335,7 @@ pub async fn handle_responses(
     let mut chat_body = json!({
         "model": model,
         "messages": messages,
-        "stream": false,
+        "stream": is_stream,
     });
 
     // Passthrough temperature, top_p, max_output_tokens to upstream
@@ -307,6 +347,57 @@ pub async fn handle_responses(
     }
     if let Some(max_tokens) = req_body.get("max_output_tokens") {
         chat_body["max_tokens"] = max_tokens.clone();
+    }
+
+    // Passthrough reasoning config (gpt-5 / o-series)
+    if let Some(reasoning) = req_body.get("reasoning") {
+        chat_body["reasoning"] = reasoning.clone();
+    }
+
+    // Passthrough service_tier
+    if let Some(service_tier) = req_body.get("service_tier") {
+        chat_body["service_tier"] = service_tier.clone();
+    }
+
+    // Passthrough text config (structured output)
+    if let Some(text) = req_body.get("text") {
+        chat_body["text"] = text.clone();
+    }
+
+    // Passthrough top_logprobs
+    if let Some(top_logprobs) = req_body.get("top_logprobs") {
+        chat_body["top_logprobs"] = top_logprobs.clone();
+    }
+
+    // Passthrough stream_options
+    if let Some(stream_options) = req_body.get("stream_options") {
+        chat_body["stream_options"] = stream_options.clone();
+    }
+
+    // Passthrough max_tool_calls
+    if let Some(max_tool_calls) = req_body.get("max_tool_calls") {
+        chat_body["max_tool_calls"] = max_tool_calls.clone();
+    }
+
+    // Passthrough include (request extra output data)
+    if let Some(include) = req_body.get("include") {
+        chat_body["include"] = include.clone();
+    }
+
+    // Passthrough prompt config
+    if let Some(prompt) = req_body.get("prompt") {
+        chat_body["prompt"] = prompt.clone();
+    }
+    if let Some(prompt_cache_key) = req_body.get("prompt_cache_key") {
+        chat_body["prompt_cache_key"] = prompt_cache_key.clone();
+    }
+    if let Some(prompt_cache_retention) = req_body.get("prompt_cache_retention") {
+        chat_body["prompt_cache_retention"] = prompt_cache_retention.clone();
+    }
+
+    // Passthrough safety_identifier
+    if let Some(safety_identifier) = req_body.get("safety_identifier") {
+        chat_body["safety_identifier"] = safety_identifier.clone();
     }
 
     // Convert tools if present
@@ -349,12 +440,11 @@ pub async fn handle_responses(
         headers,
         &requested_model,
         access_key.as_ref(),
-        false, // non-streaming
+        is_stream,
     )
     .await;
 
-    // 5. Build response based on stream mode
-    let is_stream = req_body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
+    // 6. Build response based on stream mode
     let item_id = format!("msg_{}", Uuid::new_v4().to_string().replace('-', "")[..16].to_string());
     let created_at = chrono::Utc::now().timestamp();
 
@@ -384,6 +474,7 @@ pub async fn handle_responses(
         "top_p": req_body.get("top_p").unwrap_or(&json!(1.0)),
         "truncation": req_body.get("truncation").unwrap_or(&json!("disabled")),
         "usage": null,
+        "user": req_body.get("user"),
         "metadata": req_body.get("metadata").unwrap_or(&json!({}))
     });
 
@@ -408,6 +499,161 @@ pub async fn handle_responses(
     match upstream_response {
         Ok(resp) => {
             let status = resp.status().as_u16();
+
+            if status != 200 {
+                let body_bytes = axum::body::to_bytes(resp.into_body(), 32 * 1024 * 1024)
+                    .await
+                    .unwrap_or_default();
+                let err_text = String::from_utf8_lossy(&body_bytes).chars().take(2000).collect::<String>();
+                let error_event = json!({
+                    "type": "response.failed",
+                    "response": {
+                        "id": &response_id,
+                        "object": "response",
+                        "created_at": created_at,
+                        "status": "failed",
+                        "error": { "message": err_text, "type": "upstream_error" }
+                    }
+                });
+                if is_stream {
+                    frames.push(sse_line(&error_event));
+                    frames.push(sse_done());
+                    return build_sse_response(frames);
+                } else {
+                    return Ok(axum::Json(error_event).into_response());
+                }
+            }
+
+            if is_stream {
+                // ── TRUE STREAMING: convert upstream Chat SSE → Responses API SSE ──
+                let upstream_stream = resp.into_body().into_data_stream();
+                let mut buffer = String::new();
+                let mut full_content = String::new();
+                let mut usage = json!({});
+
+                // Pre-build the initial events into frames
+                let item_id_ref = item_id.clone();
+                let response_id_ref = response_id.clone();
+
+                // We'll collect all frames first, then return as streaming response
+                // This is still "pseudo-streaming" for the conversion layer,
+                // but upstream IS being streamed incrementally.
+                let mut collected_frames: Vec<Bytes> = frames.drain(..).collect();
+
+                use futures::StreamExt;
+                let mut stream = upstream_stream;
+
+                while let Some(chunk_result) = stream.next().await {
+                    let bytes = match chunk_result {
+                        Ok(b) => b,
+                        Err(_) => break,
+                    };
+                    let chunk_str = String::from_utf8_lossy(&bytes);
+                    buffer.push_str(&chunk_str);
+
+                    // Process complete SSE lines in buffer
+                    while let Some(newline_pos) = buffer.find('\n') {
+                        let line = buffer[..newline_pos].to_string();
+                        buffer = buffer[newline_pos + 1..].to_string();
+                        let line = line.trim();
+
+                        if line.is_empty() { continue; }
+
+                        if let Some(data) = line.strip_prefix("data: ") {
+                            if data == "[DONE]" {
+                                // Emit output_item.done + response.completed
+                                if !full_content.is_empty() {
+                                    collected_frames.push(sse_line(&json!({
+                                        "type": "response.output_item.done",
+                                        "response_id": &response_id_ref,
+                                        "output_index": 0,
+                                        "item": {
+                                            "type": "message",
+                                            "role": "assistant",
+                                            "id": &item_id_ref,
+                                            "status": "completed",
+                                            "content": [{ "type": "output_text", "text": &full_content, "annotations": [] }]
+                                        }
+                                    })));
+                                }
+
+                                let input_tokens = usage.get("prompt_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+                                let output_tokens = usage.get("completion_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+                                let total_tokens = usage.get("total_tokens").and_then(|v| v.as_i64()).unwrap_or(input_tokens + output_tokens);
+
+                                collected_frames.push(sse_line(&json!({
+                                    "type": "response.completed",
+                                    "response": {
+                                        "id": &response_id_ref,
+                                        "object": "response",
+                                        "created_at": created_at,
+                                        "status": "completed",
+                                        "error": null,
+                                        "incomplete_details": null,
+                                        "instructions": req_body.get("instructions"),
+                                        "max_output_tokens": req_body.get("max_output_tokens"),
+                                        "model": model,
+                                        "output": [],
+                                        "parallel_tool_calls": req_body.get("parallel_tool_calls").unwrap_or(&json!(true)),
+                                        "previous_response_id": req_body.get("previous_response_id"),
+                                        "reasoning": { "effort": null, "summary": null },
+                                        "store": req_body.get("store").unwrap_or(&json!(true)),
+                                        "temperature": req_body.get("temperature").unwrap_or(&json!(1.0)),
+                                        "text": { "format": { "type": "text" } },
+                                        "tool_choice": req_body.get("tool_choice").unwrap_or(&json!("auto")),
+                                        "tools": req_body.get("tools").unwrap_or(&json!([])),
+                                        "top_p": req_body.get("top_p").unwrap_or(&json!(1.0)),
+                                        "truncation": req_body.get("truncation").unwrap_or(&json!("disabled")),
+                                        "usage": {
+                                            "input_tokens": input_tokens,
+                                            "input_tokens_details": { "cached_tokens": 0 },
+                                            "output_tokens": output_tokens,
+                                            "output_tokens_details": { "reasoning_tokens": 0 },
+                                            "total_tokens": total_tokens
+                                        },
+                                        "user": req_body.get("user"),
+                                        "metadata": req_body.get("metadata").unwrap_or(&json!({}))
+                                    }
+                                })));
+                                collected_frames.push(sse_done());
+                                return build_sse_response(collected_frames);
+                            }
+
+                            // Parse upstream Chat Completions chunk
+                            if let Ok(chunk_obj) = serde_json::from_str::<Value>(data) {
+                                if let Some(u) = chunk_obj.get("usage") {
+                                    usage = u.clone();
+                                }
+                                if let Some(content) = chunk_obj.get("choices")
+                                    .and_then(|c| c.as_array())
+                                    .and_then(|a| a.first())
+                                    .and_then(|c| c.get("delta"))
+                                    .and_then(|d| d.get("content"))
+                                    .and_then(|c| c.as_str())
+                                {
+                                    if !content.is_empty() {
+                                        full_content.push_str(content);
+                                        collected_frames.push(sse_line(&json!({
+                                            "type": "response.output_text.delta",
+                                            "response_id": &response_id_ref,
+                                            "item_id": &item_id_ref,
+                                            "output_index": 0,
+                                            "content_index": 0,
+                                            "delta": content
+                                        })));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Stream ended without [DONE]
+                collected_frames.push(sse_done());
+                return build_sse_response(collected_frames);
+            }
+
+            // ── NON-STREAMING: buffer entire response, parse JSON ──
             let body_bytes = match axum::body::to_bytes(resp.into_body(), 32 * 1024 * 1024).await {
                 Ok(b) => b,
                 Err(_) => {
@@ -425,22 +671,6 @@ pub async fn handle_responses(
                     return build_sse_response(frames);
                 }
             };
-
-            if status != 200 {
-                let err_text = String::from_utf8_lossy(&body_bytes).chars().take(2000).collect::<String>();
-                frames.push(sse_line(&json!({
-                    "type": "response.failed",
-                    "response": {
-                        "id": &response_id,
-                        "object": "response",
-                        "created_at": created_at,
-                        "status": "failed",
-                        "error": { "message": err_text, "type": "upstream_error" }
-                    }
-                })));
-                frames.push(sse_done());
-                return build_sse_response(frames);
-            }
 
             // Parse upstream Chat Completions response
             let obj: Value = serde_json::from_slice(&body_bytes).unwrap_or_else(|_| {
@@ -588,6 +818,7 @@ pub async fn handle_responses(
                     "output_tokens_details": { "reasoning_tokens": 0 },
                     "total_tokens": total_tokens
                 },
+                "user": req_body.get("user"),
                 "metadata": req_body.get("metadata").unwrap_or(&json!({}))
             });
 
