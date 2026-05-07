@@ -23,8 +23,11 @@ use uuid::Uuid;
 ///
 /// The `input` can be:
 /// - A plain string → single user message
-/// - A list of items (strings, or objects with `type`, `role`, `content`)
-/// - An object (rare, treated as a single user message with JSON text)
+/// - A list of items: strings, message objects, function_call, or function_call_output
+/// - An object (rare, stringified as user message)
+///
+/// multi-turn tool use: function_call → assistant tool_calls,
+/// function_call_output → tool message.
 fn input_to_messages(input: &Value, instructions: Option<&str>) -> Vec<Value> {
     let mut msgs: Vec<Value> = Vec::new();
 
@@ -36,68 +39,138 @@ fn input_to_messages(input: &Value, instructions: Option<&str>) -> Vec<Value> {
     }
 
     match input {
-        // Simple string
         Value::String(s) => {
             msgs.push(json!({ "role": "user", "content": s }));
         }
-        // Array of items
         Value::Array(items) => {
-            for item in items {
-                match item {
-                    Value::String(s) => {
-                        msgs.push(json!({ "role": "user", "content": s }));
-                    }
-                    Value::Object(obj) => {
-                        let typ = obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                        let role = match obj.get("role") {
-                            Some(Value::String(r)) if r == "system" || r == "user" || r == "assistant" || r == "tool" => r.clone(),
-                            _ => {
-                                // Infer role from type
-                                if matches!(typ, "message" | "function_call" | "custom_tool_call") {
-                                    "assistant".to_string()
-                                } else {
-                                    "user".to_string()
-                                }
-                            }
-                        };
+            // Group consecutive function_call + function_call_output pairs
+            // into a single assistant tool_calls message + individual tool messages
+            let mut i = 0;
+            while i < items.len() {
+                let item = &items[i];
 
-                        // Extract text content
-                        let text = match obj.get("content") {
-                            Some(Value::String(s)) => s.clone(),
-                            Some(Value::Array(parts)) => {
-                                let mut texts = Vec::new();
-                                for p in parts {
-                                    match p {
-                                        Value::String(s) => texts.push(s.clone()),
-                                        Value::Object(o) => {
-                                            let t = o.get("text")
-                                                .or_else(|| o.get("input_text"))
-                                                .or_else(|| o.get("output_text"))
-                                                .and_then(|v| v.as_str())
-                                                .unwrap_or("");
-                                            if !t.is_empty() {
-                                                texts.push(t.to_string());
+                if let Value::Object(obj) = item {
+                    let typ = obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
+
+                    match typ {
+                        // ── function_call → assistant message with tool_calls ──
+                        "function_call" => {
+                            let call_id = obj.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
+                            let name = obj.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                            let arguments = obj.get("arguments").and_then(|v| v.as_str()).unwrap_or("{}");
+
+                            // Collect tool calls for this assistant turn
+                            let mut tool_calls = vec![json!({
+                                "id": call_id,
+                                "type": "function",
+                                "function": {
+                                    "name": name,
+                                    "arguments": arguments,
+                                }
+                            })];
+
+                            // If next items are also function_calls (same turn), group them
+                            let mut j = i + 1;
+                            while j < items.len() {
+                                if let Value::Object(next_obj) = &items[j] {
+                                    let next_typ = next_obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                                    if next_typ == "function_call" {
+                                        let next_call_id = next_obj.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
+                                        let next_name = next_obj.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                                        let next_args = next_obj.get("arguments").and_then(|v| v.as_str()).unwrap_or("{}");
+                                        tool_calls.push(json!({
+                                            "id": next_call_id,
+                                            "type": "function",
+                                            "function": {
+                                                "name": next_name,
+                                                "arguments": next_args,
                                             }
-                                        }
-                                        _ => {}
+                                        }));
+                                        j += 1;
+                                    } else {
+                                        break;
                                     }
+                                } else {
+                                    break;
                                 }
-                                texts.join("\n")
                             }
-                            _ => continue,
-                        };
 
-                        if text.is_empty() {
+                            msgs.push(json!({
+                                "role": "assistant",
+                                "content": null,
+                                "tool_calls": tool_calls
+                            }));
+                            i = j;
                             continue;
                         }
 
-                        msgs.push(json!({ "role": role, "content": text }));
+                        // ── function_call_output → tool message ──
+                        "function_call_output" => {
+                            let call_id = obj.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
+                            let output = match obj.get("output") {
+                                Some(Value::String(s)) => s.clone(),
+                                Some(v) => serde_json::to_string(v).unwrap_or_else(|_| String::new()),
+                                None => String::new(),
+                            };
+
+                            msgs.push(json!({
+                                "role": "tool",
+                                "tool_call_id": call_id,
+                                "content": output,
+                            }));
+                            i += 1;
+                            continue;
+                        }
+
+                        // ── regular message ──
+                        _ => {
+                            let role = match obj.get("role") {
+                                Some(Value::String(r)) if r == "system" || r == "user" || r == "assistant" || r == "tool" => r.clone(),
+                                _ => {
+                                    if matches!(typ, "message") { "assistant".to_string() } else { "user".to_string() }
+                                }
+                            };
+
+                            let text = match obj.get("content") {
+                                Some(Value::String(s)) => s.clone(),
+                                Some(Value::Array(parts)) => {
+                                    let mut texts = Vec::new();
+                                    for p in parts {
+                                        match p {
+                                            Value::String(s) => texts.push(s.clone()),
+                                            Value::Object(o) => {
+                                                let t = o.get("text")
+                                                    .or_else(|| o.get("input_text"))
+                                                    .or_else(|| o.get("output_text"))
+                                                    .and_then(|v| v.as_str())
+                                                    .unwrap_or("");
+                                                if !t.is_empty() { texts.push(t.to_string()); }
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                    texts.join("\n")
+                                }
+                                _ => String::new(),
+                            };
+
+                            if !text.is_empty() {
+                                msgs.push(json!({ "role": role, "content": text }));
+                            } else if matches!(typ, "function_call" | "function_call_output") {
+                                // Already handled above; skip empty message fallback
+                            }
+
+                            i += 1;
+                        }
                     }
-                    _ => {}
+                } else if let Value::String(s) = item {
+                    msgs.push(json!({ "role": "user", "content": s }));
+                    i += 1;
+                } else {
+                    i += 1;
                 }
             }
         }
-        // Object or other — stringify as user message
         other => {
             let text = if other.is_null() {
                 "Hello".to_string()
@@ -320,25 +393,75 @@ pub async fn handle_responses(
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
 
-            // output_text.delta with the full content
+            let tool_calls = msg.get("tool_calls").and_then(|v| v.as_array());
+
+            // Text output
             if !content.is_empty() {
                 frames.push(sse_line(&json!({
                     "type": "response.output_text.delta",
+                    "item_id": &item_id,
+                    "output_index": 0,
                     "delta": content
                 })));
-            }
-
-            // output_item.done
-            if !content.is_empty() {
                 frames.push(sse_line(&json!({
                     "type": "response.output_item.done",
+                    "output_index": 0,
                     "item": {
                         "type": "message",
                         "role": "assistant",
                         "id": &item_id,
+                        "status": "completed",
                         "content": [{ "type": "output_text", "text": content }]
                     }
                 })));
+            }
+
+            // Tool calls (function_call output)
+            if let Some(tc_array) = tool_calls {
+                for (idx, tc) in tc_array.iter().enumerate() {
+                    let output_index = if content.is_empty() { idx as u32 } else { (idx + 1) as u32 };
+                    let tc_id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                    let tc_fn = tc.get("function").cloned().unwrap_or_else(|| json!({}));
+                    let tc_name = tc_fn.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                    let tc_args = tc_fn.get("arguments").and_then(|v| v.as_str()).unwrap_or("{}");
+
+                    frames.push(sse_line(&json!({
+                        "type": "response.output_item.added",
+                        "output_index": output_index,
+                        "item": {
+                            "id": tc_id,
+                            "type": "function_call",
+                            "call_id": tc_id,
+                            "name": tc_name,
+                            "arguments": "",
+                            "status": "in_progress"
+                        }
+                    })));
+                    frames.push(sse_line(&json!({
+                        "type": "response.function_call_arguments.delta",
+                        "item_id": tc_id,
+                        "output_index": output_index,
+                        "delta": tc_args
+                    })));
+                    frames.push(sse_line(&json!({
+                        "type": "response.function_call_arguments.done",
+                        "item_id": tc_id,
+                        "output_index": output_index,
+                        "arguments": tc_args
+                    })));
+                    frames.push(sse_line(&json!({
+                        "type": "response.output_item.done",
+                        "output_index": output_index,
+                        "item": {
+                            "id": tc_id,
+                            "type": "function_call",
+                            "call_id": tc_id,
+                            "name": tc_name,
+                            "arguments": tc_args,
+                            "status": "completed"
+                        }
+                    })));
+                }
             }
 
             // Usage
