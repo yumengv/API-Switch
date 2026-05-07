@@ -1,12 +1,10 @@
 use crate::admin::error::AdminError;
 use crate::admin::state::AdminState;
 use axum::extract::{Request, State};
-#[cfg(not(debug_assertions))]
 use axum::http::header::AUTHORIZATION;
 use axum::middleware::Next;
 use axum::response::Response;
 
-#[cfg(not(debug_assertions))]
 const SESSION_TTL_HOURS: i64 = 24;
 
 pub async fn require_auth(
@@ -14,43 +12,32 @@ pub async fn require_auth(
     request: Request,
     next: Next,
 ) -> Result<Response, AdminError> {
-    #[cfg(debug_assertions)]
-    {
-        let _ = state;
-        // Dev-only bypass: used to verify the shared Desktop/Web UI data path without
-        // blocking on Web Admin login/token flow. Release builds still require auth.
-        return Ok(next.run(request).await);
-    }
+    let token = request
+        .headers()
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .map(str::to_string)
+        .ok_or(AdminError::Unauthorized)?;
 
-    #[cfg(not(debug_assertions))]
-    {
-        let token = request
-            .headers()
-            .get(AUTHORIZATION)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.strip_prefix("Bearer "))
-            .map(str::to_string)
-            .ok_or(AdminError::Unauthorized)?;
+    let now = chrono::Utc::now();
+    let current_username = state.settings.read().await.web_admin_username.clone();
 
-        let now = chrono::Utc::now();
-        let current_username = state.settings.read().await.web_admin_username.clone();
+    let mut sessions = state.login_sessions.write().await;
+    sessions.retain(|_, session| session.expires_at > now);
 
-        let mut sessions = state.login_sessions.write().await;
-        sessions.retain(|_, session| session.expires_at > now);
-
-        let session_valid = match sessions.get_mut(&token) {
-            Some(session) if session.username == current_username => {
-                session.expires_at = now + chrono::Duration::hours(SESSION_TTL_HOURS);
-                true
-            }
-            _ => false,
-        };
-
-        if !session_valid {
-            sessions.remove(&token);
-            return Err(AdminError::Unauthorized);
+    let session_valid = match sessions.get_mut(&token) {
+        Some(session) if session.username == current_username => {
+            session.expires_at = now + chrono::Duration::hours(SESSION_TTL_HOURS);
+            true
         }
+        _ => false,
+    };
 
-        Ok(next.run(request).await)
+    if !session_valid {
+        sessions.remove(&token);
+        return Err(AdminError::Unauthorized);
     }
+
+    Ok(next.run(request).await)
 }
