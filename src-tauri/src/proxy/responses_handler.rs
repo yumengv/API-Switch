@@ -879,7 +879,14 @@ let req_body: Value = match serde_json::from_slice(&body_bytes) {
                                             let tc_id_new = tc_delta.get("id").and_then(|v| v.as_str()).unwrap_or("");
                                             let tc_fn = tc_delta.get("function").cloned().unwrap_or_else(|| json!({}));
                                             let tc_name_delta = tc_fn.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                                            let tc_args_delta = tc_fn.get("arguments").and_then(|v| v.as_str()).unwrap_or("");
+                                            // Handle arguments as both string and object (for streaming deltas)
+                                            let tc_args_delta = match tc_fn.get("arguments") {
+                                                Some(Value::String(s)) => s.clone(),
+                                                Some(Value::Object(_)) | Some(Value::Array(_)) => {
+                                                    serde_json::to_string(tc_fn.get("arguments").unwrap()).unwrap_or_else(|_| String::new())
+                                                }
+                                                _ => String::new(),
+                                            };
 
                                             let entry = tool_accum.entry(tc_idx).or_insert_with(|| ToolCallEntry {
                                                 id: String::new(),
@@ -895,7 +902,7 @@ let req_body: Value = match serde_json::from_slice(&body_bytes) {
                                                 entry.name = tc_name_delta.to_string();
                                             }
                                             if !tc_args_delta.is_empty() {
-                                                entry.arguments.push_str(tc_args_delta);
+                                                entry.arguments.push_str(&tc_args_delta);
                                             }
 
                                             // Emit output_item.added only on first occurrence
@@ -1068,7 +1075,14 @@ let req_body: Value = match serde_json::from_slice(&body_bytes) {
                     let tc_id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("");
                     let tc_fn = tc.get("function").cloned().unwrap_or_else(|| json!({}));
                     let tc_name = tc_fn.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                    let tc_args = tc_fn.get("arguments").and_then(|v| v.as_str()).unwrap_or("{}");
+                    // Handle arguments as both string and object
+                    let tc_args = match tc_fn.get("arguments") {
+                        Some(Value::String(s)) => s.clone(),
+                        Some(Value::Object(_)) | Some(Value::Array(_)) => {
+                            serde_json::to_string(tc_fn.get("arguments").unwrap()).unwrap_or_else(|_| "{}".to_string())
+                        }
+                        _ => "{}".to_string(),
+                    };
 
                     frames.push(sse_line(&json!({
                         "type": "response.output_item.added",
