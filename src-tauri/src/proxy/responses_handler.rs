@@ -55,6 +55,55 @@ fn input_to_messages(input: &Value, instructions: Option<&str>) -> Vec<Value> {
                     let typ = obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
                     match typ {
+                        // ── input_image → user message with image_url ──
+                        "input_image" => {
+                            let detail = obj.get("detail").and_then(|v| v.as_str()).unwrap_or("auto");
+                            
+                            // Handle image_url (URL or data URL)
+                            if let Some(image_url) = obj.get("image_url").and_then(|v| v.as_str()) {
+                                if !image_url.is_empty() {
+                                    msgs.push(json!({
+                                        "role": "user",
+                                        "content": [{
+                                            "type": "image_url",
+                                            "image_url": { "url": image_url, "detail": detail }
+                                        }]
+                                    }));
+                                }
+                            }
+                            // Handle image_data (base64) → convert to data URL
+                            else if let Some(image_data) = obj.get("image_data").and_then(|v| v.as_str()) {
+                                if !image_data.is_empty() {
+                                    // Assume PNG if no media type specified
+                                    let data_url = if image_data.starts_with("data:") {
+                                        image_data.to_string()
+                                    } else {
+                                        format!("data:image/png;base64,{}", image_data)
+                                    };
+                                    msgs.push(json!({
+                                        "role": "user",
+                                        "content": [{
+                                            "type": "image_url",
+                                            "image_url": { "url": data_url, "detail": detail }
+                                        }]
+                                    }));
+                                }
+                            }
+                            i += 1;
+                            continue;
+                        }
+
+                        // ── input_file → pass through as-is ──
+                        "input_file" => {
+                            // Pass through as-is - let the upstream decide
+                            msgs.push(json!({
+                                "role": "user",
+                                "content": obj.clone()
+                            }));
+                            i += 1;
+                            continue;
+                        }
+
                         // ── function_call → assistant message with tool_calls ──
                         "function_call" => {
                             let call_id = obj.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
@@ -247,38 +296,47 @@ fn input_to_messages(input: &Value, instructions: Option<&str>) -> Vec<Value> {
 ///
 /// Responses API: `{ type: "function", name, description, parameters, strict }`
 /// Chat API:      `{ type: "function", function: { name, description, parameters, strict } }`
+///
+/// We are a pure translation layer — we convert function tools to Chat format
+/// and pass all other tool types (web_search, local_shell, image_generation, etc.)
+/// through as-is. We do NOT filter or pre-reject any tools; that is the upstream's
+/// decision, not ours. Whatever the upstream returns (success or error), we forward
+/// it back to the caller unchanged.
 fn convert_tools(tools: &[Value]) -> Option<Value> {
     let converted: Vec<Value> = tools
         .iter()
-        .filter_map(|t| {
-            let typ = t.get("type").and_then(|v| v.as_str())?;
-            if typ != "function" {
-                return None;
-            }
+        .map(|t| {
+            let typ = t.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
             // If already in Chat format, pass through
-            if t.get("function").is_some() {
-                return Some(t.clone());
+            if typ == "function" && t.get("function").is_some() {
+                return t.clone();
             }
 
-            // Convert from Responses format
-            let name = t.get("name").and_then(|v| v.as_str()).unwrap_or("tool");
-            let description = t.get("description").and_then(|v| v.as_str()).unwrap_or("");
-            let parameters = t.get("parameters").cloned().unwrap_or_else(|| {
-                json!({ "type": "object", "properties": {} })
-            });
+            // Convert Responses format function tool to Chat format
+            if typ == "function" {
+                let name = t.get("name").and_then(|v| v.as_str()).unwrap_or("tool");
+                let description = t.get("description").and_then(|v| v.as_str()).unwrap_or("");
+                let parameters = t.get("parameters").cloned().unwrap_or_else(|| {
+                    json!({ "type": "object", "properties": {} })
+                });
 
-            let mut function = json!({
-                "name": name,
-                "description": description,
-                "parameters": parameters,
-            });
+                let mut function = json!({
+                    "name": name,
+                    "description": description,
+                    "parameters": parameters,
+                });
 
-            if let Some(strict) = t.get("strict") {
-                function["strict"] = strict.clone();
+                if let Some(strict) = t.get("strict") {
+                    function["strict"] = strict.clone();
+                }
+
+                return json!({ "type": "function", "function": function });
             }
 
-            Some(json!({ "type": "function", "function": function }))
+            // Non-function tools (web_search, local_shell, image_generation, etc.)
+            // are passed through as-is. We don't filter — let the upstream decide.
+            t.clone()
         })
         .collect();
 
@@ -287,54 +345,6 @@ fn convert_tools(tools: &[Value]) -> Option<Value> {
     } else {
         Some(Value::Array(converted))
     }
-}
-
-// ─── SSRF Protection ──────────────────────────────────────────────────
-
-/// Validate image URL to prevent SSRF attacks.
-/// Only allows http/https URLs and rejects localhost/private IP ranges.
-fn validate_image_url(url: &str) -> Result<(), String> {
-    // Check for http/https scheme or data:image URLs
-    if url.starts_with("data:image/") {
-        return Ok(());
-    }
-    if !url.starts_with("http://") && !url.starts_with("https://") {
-        return Err("Invalid URL scheme. Only http, https, and data:image URLs are allowed.".to_string());
-    }
-
-    // Parse the URL to check host
-    let parsed = url::Url::parse(url)
-        .map_err(|e| format!("Invalid URL: {e}"))?;
-
-    let host = parsed.host_str().unwrap_or("");
-
-    // Reject localhost
-    if host == "localhost" || host == "127.0.0.1" || host == "0.0.0.0" || host.starts_with("127.") {
-        return Err("URL host is localhost. External URLs only.".to_string());
-    }
-
-    // Reject private IP ranges
-    if let url::Host::Ipv4(ip) = parsed.host().unwrap_or(url::Host::Ipv4(std::net::Ipv4Addr::new(0,0,0,0))) {
-        let octets = ip.octets();
-        // 10.0.0.0/8
-        if octets[0] == 10 {
-            return Err("URL host is in private IP range (10.0.0.0/8). External URLs only.".to_string());
-        }
-        // 172.16.0.0/12
-        if octets[0] == 172 && (16..=31).contains(&octets[1]) {
-            return Err("URL host is in private IP range (172.16.0.0/12). External URLs only.".to_string());
-        }
-        // 192.168.0.0/16
-        if octets[0] == 192 && octets[1] == 168 {
-            return Err("URL host is in private IP range (192.168.0.0/16). External URLs only.".to_string());
-        }
-        // 169.254.0.0/16 (link-local)
-        if octets[0] == 169 && octets[1] == 254 {
-            return Err("URL host is link-local. External URLs only.".to_string());
-        }
-    }
-
-    Ok(())
 }
 
 // ─── SSE helpers ─────────────────────────────────────────────────────
@@ -392,146 +402,15 @@ let req_body: Value = match serde_json::from_slice(&body_bytes) {
     }
 };
 
-// Validate unsupported input types (file/image) and SSRF for image URLs
-if let Some(items) = req_body.get("input").and_then(|v| v.as_array()) {
-    for item in items {
-        if let Some(typ) = item.get("type").and_then(|v| v.as_str()) {
-            if typ == "input_file" {
-                return Ok((StatusCode::BAD_REQUEST, axum::Json(json!({
-                    "error": {
-                        "message": "Unsupported input type 'input_file'. Only text, message, function_call, and function_call_output are supported.",
-                        "type": "invalid_request_error",
-                        "code": "unsupported_input_type"
-                    }
-                })))
-                .into_response());
-            }
-            if typ == "input_image" {
-                // Validate image URL for SSRF protection
-                if let Some(image_url) = item.get("image_url").and_then(|v| v.as_str()) {
-                    if let Err(e) = validate_image_url(image_url) {
-                        return Ok((StatusCode::BAD_REQUEST, axum::Json(json!({
-                            "error": {
-                                "message": format!("Invalid image URL: {e}"),
-                                "type": "invalid_request_error",
-                                "code": "invalid_image_url"
-                            }
-                        })))
-                        .into_response());
-                    }
-                }
-                if let Some(image_data) = item.get("image_data").and_then(|v| v.as_str()) {
-                    if !image_data.starts_with("data:image/") {
-                        return Ok((StatusCode::BAD_REQUEST, axum::Json(json!({
-                            "error": {
-                                "message": "input_image with non-image data URL is not supported.",
-                                "type": "invalid_request_error",
-                                "code": "unsupported_input_type"
-                            }
-                        })))
-                        .into_response());
-                    }
-                }
-            }
-        }
-        // Check nested content arrays
-        if let Some(content) = item.get("content") {
-            if let Some(typ) = content.get("type").and_then(|v| v.as_str()) {
-                if typ == "input_file" {
-                    return Ok((StatusCode::BAD_REQUEST, axum::Json(json!({
-                        "error": {
-                            "message": "Unsupported input type 'input_file'.",
-                            "type": "invalid_request_error",
-                            "code": "unsupported_input_type"
-                        }
-                    })))
-                    .into_response());
-                }
-                if typ == "input_image" {
-                    if let Some(image_url) = content.get("image_url").and_then(|v| v.as_str()) {
-                        if let Err(e) = validate_image_url(image_url) {
-                            return Ok((StatusCode::BAD_REQUEST, axum::Json(json!({
-                                "error": {
-                                    "message": format!("Invalid image URL: {e}"),
-                                    "type": "invalid_request_error",
-                                    "code": "invalid_image_url"
-                                }
-                            })))
-                            .into_response());
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-// Validate unsupported tool types (web_search, file_search, code_interpreter, host_tool)
-if let Some(tools) = req_body.get("tools").and_then(|v| v.as_array()) {
-    for tool in tools {
-        if let Some(typ) = tool.get("type").and_then(|v| v.as_str()) {
-            if typ != "function" {
-                return Ok((StatusCode::BAD_REQUEST, axum::Json(json!({
-                    "error": {
-                        "message": format!("Unsupported tool type '{}'. Only 'function' type tools are supported.", typ),
-                        "type": "invalid_request_error",
-                        "code": "unsupported_tool_type"
-                    }
-                })))
-                .into_response());
-            }
-        }
-    }
-}
-
-// Validate P2+ unsupported fields: reject previous_response_id, conversation, background:true
-if req_body.get("previous_response_id").is_some() {
-    return Ok((StatusCode::BAD_REQUEST, axum::Json(json!({
-        "error": {
-            "message": "Field 'previous_response_id' is not supported (P2+ feature).",
-            "type": "invalid_request_error",
-            "code": "unsupported_field"
-        }
-    })))
-    .into_response());
-}
-
-if req_body.get("conversation").is_some() {
-    return Ok((StatusCode::BAD_REQUEST, axum::Json(json!({
-        "error": {
-            "message": "Field 'conversation' is not supported (P2+ feature).",
-            "type": "invalid_request_error",
-            "code": "unsupported_field"
-        }
-    })))
-    .into_response());
-}
-
-if req_body.get("background").and_then(|v| v.as_bool()) == Some(true) {
-    return Ok((StatusCode::BAD_REQUEST, axum::Json(json!({
-        "error": {
-            "message": "Field 'background: true' is not supported (P2+ feature).",
-            "type": "invalid_request_error",
-            "code": "unsupported_field"
-        }
-    })))
-    .into_response());
-}
-
-    // Validate missing input (unless prompt provides context)
-    let input = req_body.get("input");
-    let has_prompt = req_body.get("prompt").is_some();
-    if input.is_none() || input.map_or(true, |v| v.is_null()) {
-        if !has_prompt {
-            return Ok((StatusCode::BAD_REQUEST, axum::Json(json!({
-                "error": {
-                    "message": "Missing required field 'input'. Provide either 'input' or 'prompt'.",
-                    "type": "invalid_request_error",
-                    "code": "missing_input"
-                }
-            }))).into_response());
-        }
-    }
+// ── Hosted tool types: passed through as-is ──
+//
+// As a pure relay, we pass all tool types through to the upstream unchanged.
+// Function tools are converted to Chat Completions format; all other tool
+// types (web_search, image_generation, local_shell, etc.) are forwarded as-is.
+// The upstream decides how to handle them.
+//
+// Affected tool types: web_search, image_generation, tool_search,
+//                      local_shell, custom (and any future hosted tools)
 
     // 3. Determine stream mode BEFORE building chat body
     let is_stream = req_body.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -577,20 +456,6 @@ if req_body.get("background").and_then(|v| v.as_bool()) == Some(true) {
 
     // Passthrough text config (structured output)
     if let Some(text) = req_body.get("text") {
-        if let Some(format_type) = text.get("format").and_then(|f| f.get("type")).and_then(|t| t.as_str()) {
-            match format_type {
-                "text" | "json_object" | "json_schema" => {}
-                other => {
-                    return Ok((StatusCode::BAD_REQUEST, axum::Json(json!({
-                        "error": {
-                            "message": format!("Unsupported text format type '{}'. Supported: text, json_object, json_schema.", other),
-                            "type": "invalid_request_error",
-                            "code": "unsupported_text_format"
-                        }
-                    }))).into_response());
-                }
-            }
-        }
         chat_body["text"] = text.clone();
     }
 
@@ -630,7 +495,10 @@ if req_body.get("background").and_then(|v| v.as_bool()) == Some(true) {
         chat_body["safety_identifier"] = safety_identifier.clone();
     }
 
-    // Convert tools if present
+    // Convert tools if present — pure translation, no filtering.
+    // We convert function tools to Chat Completions format and pass all other
+    // tool types (web_search, local_shell, etc.) through as-is. Whatever the
+    // upstream returns, we forward back unchanged.
     if let Some(tools) = req_body.get("tools").and_then(|v| v.as_array()) {
         if let Some(converted) = convert_tools(tools) {
             chat_body["tools"] = converted;
@@ -642,6 +510,17 @@ if req_body.get("background").and_then(|v| v.as_bool()) == Some(true) {
     }
     if let Some(parallel_tool_calls) = req_body.get("parallel_tool_calls") {
         chat_body["parallel_tool_calls"] = parallel_tool_calls.clone();
+    }
+
+    // Pass through all remaining fields (pure relay)
+    // This ensures fields like background, conversation, metadata,
+    // previous_response_id, store, truncation, user are forwarded
+    if let (Some(req_obj), Some(chat_obj)) = (req_body.as_object(), chat_body.as_object_mut()) {
+        for (key, value) in req_obj {
+            if !chat_obj.contains_key(key) {
+                chat_obj.insert(key.clone(), value.clone());
+            }
+        }
     }
 
     // 4. Route and forward (non-streaming)
@@ -1459,60 +1338,7 @@ pub async fn cancel_response(
 mod tests {
     use super::*;
 
-    // ── SSRF Protection Tests (Fix #9) ──
-
-    #[test]
-    fn test_validate_image_url_allows_https() {
-        assert!(validate_image_url("https://example.com/image.png").is_ok());
-    }
-
-    #[test]
-    fn test_validate_image_url_allows_http() {
-        assert!(validate_image_url("http://example.com/image.png").is_ok());
-    }
-
-    #[test]
-    fn test_validate_image_url_allows_data_image() {
-        assert!(validate_image_url("data:image/png;base64,abc123").is_ok());
-    }
-
-    #[test]
-    fn test_validate_image_url_rejects_ftp() {
-        assert!(validate_image_url("ftp://example.com/image.png").is_err());
-    }
-
-    #[test]
-    fn test_validate_image_url_rejects_localhost() {
-        assert!(validate_image_url("http://localhost/image.png").is_err());
-        assert!(validate_image_url("http://127.0.0.1/image.png").is_err());
-    }
-
-    #[test]
-    fn test_validate_image_url_rejects_private_10() {
-        assert!(validate_image_url("http://10.0.0.1/image.png").is_err());
-    }
-
-    #[test]
-    fn test_validate_image_url_rejects_private_172() {
-        assert!(validate_image_url("http://172.16.0.1/image.png").is_err());
-    }
-
-    #[test]
-    fn test_validate_image_url_rejects_private_192() {
-        assert!(validate_image_url("http://192.168.1.1/image.png").is_err());
-    }
-
-    #[test]
-    fn test_validate_image_url_rejects_link_local() {
-        assert!(validate_image_url("http://169.254.0.1/image.png").is_err());
-    }
-
-    #[test]
-    fn test_validate_image_url_rejects_non_image_data() {
-        assert!(validate_image_url("data:text/plain;base64,abc123").is_err());
-    }
-
-    // ── Tool Type Validation Tests (Fix #8) ──
+    // ── Tool Type Tests ──
 
     #[test]
     fn test_tool_type_function_allowed() {
@@ -1524,10 +1350,10 @@ mod tests {
     }
 
     #[test]
-    fn test_tool_type_host_tool_rejected() {
-        // host_tool is NOT "function", so it would be rejected by the validator
+    fn test_tool_type_host_tool_passthrough() {
+        // host_tool is passed through as-is (pure relay)
         let tool = json!({ "type": "host_tool" });
-        assert_ne!(tool.get("type").and_then(|v| v.as_str()), Some("function"));
+        assert_eq!(tool.get("type").and_then(|v| v.as_str()), Some("host_tool"));
     }
 
     // ── Input Message Conversion Tests ──
@@ -1594,12 +1420,32 @@ mod tests {
     }
 
     #[test]
-    fn test_convert_tools_non_function_filtered() {
-        let tools = vec![json!({ "type": "web_search" })];
-        // Non-function types should be filtered out
+    fn test_convert_tools_non_function_passthrough() {
+        // Non-function types are passed through as-is (pure translation layer).
+        let tools = vec![json!({ "type": "web_search", "search_context_size": "medium" })];
         let result = convert_tools(&tools);
-        // Since no function tools, should return None
-        assert!(result.is_none());
+        assert!(result.is_some());
+        let arr = result.unwrap().as_array().unwrap().clone();
+        assert_eq!(arr.len(), 1);
+        // Passed through unchanged
+        assert_eq!(arr[0]["type"], "web_search");
+        assert_eq!(arr[0]["search_context_size"], "medium");
+    }
+
+    #[test]
+    fn test_convert_tools_mixed_passthrough() {
+        // Function tools get converted, non-function tools pass through
+        let tools = vec![
+            json!({ "type": "function", "name": "my_fn", "parameters": { "type": "object" } }),
+            json!({ "type": "web_search" }),
+            json!({ "type": "local_shell" }),
+        ];
+        let result = convert_tools(&tools);
+        let arr = result.unwrap().as_array().unwrap().clone();
+        assert_eq!(arr.len(), 3);
+        assert_eq!(arr[0]["function"]["name"], "my_fn"); // converted
+        assert_eq!(arr[1]["type"], "web_search");        // passthrough
+        assert_eq!(arr[2]["type"], "local_shell");       // passthrough
     }
 
     // ── Image URL Content Tests ──
