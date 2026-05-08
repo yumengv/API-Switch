@@ -148,16 +148,15 @@ pub fn openai_to_claude_response(openai: &Value) -> Value {
 
     let choice = openai
         .get("choices")
-        .and_then(|c| c.get(0))
-        .expect("OpenAI response must have at least one choice");
+        .and_then(|c| c.get(0));
 
-    let message = choice.get("message").expect("Choice must have message");
+    let message = choice.and_then(|c| c.get("message"));
     let content_str = message
-        .get("content")
+        .and_then(|m| m.get("content"))
         .and_then(|c| c.as_str())
         .unwrap_or("");
 
-    let tool_calls = message.get("tool_calls").and_then(|tc| tc.as_array());
+    let tool_calls = message.and_then(|m| m.get("tool_calls")).and_then(|tc| tc.as_array());
 
     // Build content array
     let mut content = Vec::new();
@@ -196,7 +195,7 @@ pub fn openai_to_claude_response(openai: &Value) -> Value {
 
     // Map finish_reason
     let finish_reason = choice
-        .get("finish_reason")
+        .and_then(|c| c.get("finish_reason"))
         .and_then(|fr| fr.as_str())
         .unwrap_or("stop");
 

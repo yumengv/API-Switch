@@ -262,27 +262,21 @@ fn transform_request_to_anthropic(body: &mut Value, actual_model: &str) {
         _ => {}
     }
 
-    // Remove unsupported OpenAI-specific fields to prevent Anthropic 400 errors
-    for field in &[
-        "frequency_penalty",
-        "presence_penalty",
-        "logprobs",
-        "seed",
-        "logit_bias",
-        "n",
-        "response_format",
-        "top_logprobs",
-        "service_tier",
-    ] {
-        obj.remove(*field);
-    }
-
     // user → metadata.user_id
     if let Some(user) = obj.remove("user") {
         if let Value::Object(ref mut meta) = anthropic["metadata"] {
             meta.insert("user_id".to_string(), user);
         } else {
             anthropic["metadata"] = json!({ "user_id": user });
+        }
+    }
+
+    // Pass through all remaining fields (pure relay)
+    if let Value::Object(ref mut anthropic_obj) = anthropic {
+        for (key, value) in obj.iter() {
+            if !anthropic_obj.contains_key(key) {
+                anthropic_obj.insert(key.clone(), value.clone());
+            }
         }
     }
 
@@ -995,10 +989,10 @@ mod tests {
         assert_eq!(body["tool_choice"]["disable_parallel_tool_use"], true);
     }
 
-    // ─── unsupported param filtering tests (Phase 1.3) ────────────────
+    // ─── passthrough param tests ─────────────────────────────────────
 
     #[test]
-    fn test_unsupported_params_filtered() {
+    fn test_params_passthrough() {
         let mut body = json!({
             "model": "claude-3-sonnet-20240229",
             "messages": [{"role": "user", "content": "Hi"}],
@@ -1013,15 +1007,15 @@ mod tests {
             "service_tier": "auto"
         });
         transform_request_to_anthropic(&mut body, "claude-3-sonnet-20240229");
-        assert!(body.get("frequency_penalty").is_none());
-        assert!(body.get("presence_penalty").is_none());
-        assert!(body.get("seed").is_none());
-        assert!(body.get("logit_bias").is_none());
-        assert!(body.get("logprobs").is_none());
-        assert!(body.get("n").is_none());
-        assert!(body.get("response_format").is_none());
-        assert!(body.get("top_logprobs").is_none());
-        assert!(body.get("service_tier").is_none());
+        // All fields should be passed through (pure relay)
+        assert!(body.get("frequency_penalty").is_some());
+        assert!(body.get("presence_penalty").is_some());
+        assert!(body.get("seed").is_some());
+        assert!(body.get("logit_bias").is_some());
+        assert!(body.get("logprobs").is_some());
+        assert!(body.get("n").is_some());
+        assert!(body.get("top_logprobs").is_some());
+        assert!(body.get("service_tier").is_some());
         // core fields must survive
         assert!(body.get("model").is_some());
         assert!(body.get("messages").is_some());
@@ -1171,8 +1165,13 @@ mod tests {
             "response_format": {"type": "json_object"}
         });
         transform_request_to_anthropic(&mut body, "claude-3-sonnet-20240229");
-        let system = body["system"].as_str().unwrap();
-        assert!(system.contains("You are a helper."));
-        assert!(system.contains("valid JSON only"));
+        let system = body["system"].as_array().unwrap();
+        let system_text: String = system
+            .iter()
+            .filter_map(|block| block.get("text").and_then(|t| t.as_str()))
+            .collect::<Vec<_>>()
+            .join("");
+        assert!(system_text.contains("You are a helper."));
+        assert!(system_text.contains("valid JSON only"));
     }
 }
