@@ -22,6 +22,11 @@ use tokio::time::sleep;
 const STREAMING_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 const STREAMING_PING_INTERVAL: Duration = Duration::from_secs(10);
 
+#[derive(Debug, Default)]
+struct SseDoneState {
+    seen_done: bool,
+    appended_model_info: bool,
+}
 #[derive(Debug, Clone, Copy)]
 enum StreamEndReason {
     Done,
@@ -50,8 +55,12 @@ fn is_completed_stream_success(
     status_code == 200 && !has_sse_error && chunk_count > 0 && streamed_bytes > 0
 }
 
-fn is_dropped_stream_success(status_code: i32, prompt_tokens: i64, completion_tokens: i64) -> bool {
-    status_code == 200 && (prompt_tokens > 0 || completion_tokens > 0)
+/// 判断客户端断开的流是否算成功。
+/// 修复: 原逻辑要求 prompt_tokens > 0 || completion_tokens > 0，但很多上游 API 在流式响应中
+/// 不返回 usage 信息，导致客户端断开时即使模型正常工作也被误判为失败。
+/// 只要 status_code == 200 就算成功（客户端断开不代表模型故障）。
+fn is_dropped_stream_success(status_code: i32, _prompt_tokens: i64, _completion_tokens: i64) -> bool {
+    status_code == 200
 }
 
 #[derive(Debug, Clone)]
@@ -448,9 +457,11 @@ async fn forward_single(
 
     if is_stream {
         let needs_transform = adapter.needs_sse_transform();
+        let append_model_info = should_append_model_info(state, body);
         let response = build_streaming_response(
             state, entry, access_key, requested_model,
             &url, response, status_code, needs_transform, adapter, request_start, prior_attempts,
+            append_model_info,
         );
         Ok(ForwardResult {
             response, prompt_tokens: 0, completion_tokens: 0,
@@ -485,6 +496,23 @@ fn extract_usage_tokens(body: &Value) -> (i64, i64) {
     (prompt_tokens, completion_tokens)
 }
 
+fn request_uses_structured_output(body: &Value) -> bool {
+    body.get("response_format").is_some()
+}
+
+fn should_append_model_info(state: &ProxyState, body: &Value) -> bool {
+    let setting_enabled = state
+        .settings
+        .try_read()
+        .map(|settings| settings.show_conversation_model)
+        .unwrap_or(true);
+
+    // 模型名是普通正文注入。结构化输出会把正文当协议内容解析，
+    // 不能追加 `model: ...`。工具调用请求不在这里预先屏蔽，
+    // 因为真正追加前还会要求流里已经出现普通文本 delta；纯工具调用流不会追加。
+    setting_enabled && !request_uses_structured_output(body)
+}
+
 fn build_streaming_response(
     state: &ProxyState,
     entry: &ApiEntry,
@@ -497,14 +525,10 @@ fn build_streaming_response(
     adapter: Box<dyn super::protocol::ProtocolAdapter + Send + Sync>,
     request_start: std::time::Instant,
     prior_attempts: Vec<AttemptInfo>,
+    append_model_info: bool,
 ) -> axum::response::Response {
     let response_headers = response.headers().clone();
     let upstream_url = upstream_url.to_string();
-    let append_model_info = state
-        .settings
-        .try_read()
-        .map(|settings| settings.show_conversation_model)
-        .unwrap_or(true);
     let start = request_start;
     let db = state.db.clone();
     let app_handle = state.app_handle.clone();
@@ -521,6 +545,7 @@ fn build_streaming_response(
     let seen_first_chunk = Arc::new(AtomicBool::new(false));
     let logged = Arc::new(AtomicBool::new(false));
     let mut sse_buffer = String::new();
+    let mut done_state = SseDoneState::default();
     let mut upstream_stream = Box::pin(response.bytes_stream());
     let mut idle_timeout = Box::pin(sleep(STREAMING_IDLE_TIMEOUT));
     let _ping_interval = Box::pin(sleep(STREAMING_PING_INTERVAL));
@@ -615,6 +640,7 @@ fn build_streaming_response(
                         &prompt_tokens, &completion_tokens,
                         &has_text_delta,
                         append_model_info.then_some(entry.model.as_str()),
+                        &mut done_state,
                     ) {
                         return Poll::Ready(Some(Ok(transformed)));
                     } else {
@@ -630,6 +656,7 @@ fn build_streaming_response(
                         &has_sse_error,
                         &has_text_delta,
                         append_model_info.then_some(entry.model.as_str()),
+                        &mut done_state,
                     ) {
                         return Poll::Ready(Some(Ok(with_model_info)));
                     }
@@ -797,6 +824,7 @@ fn transform_sse_chunk(
     completion_tokens: &Arc<AtomicI64>,
     has_text_delta: &Arc<AtomicBool>,
     model_info: Option<&str>,
+    done_state: &mut SseDoneState,
 ) -> Option<Bytes> {
     buffer.push_str(&String::from_utf8_lossy(chunk));
     let mut output = Vec::new();
@@ -806,26 +834,33 @@ fn transform_sse_chunk(
         if line.ends_with('\n') { line.pop(); }
         if line.ends_with('\r') { line.pop(); }
 
-        let Some(payload) = line.strip_prefix("data: ") else { continue };
-        if payload == "[DONE]" {
-            if let Some(model) = model_info.filter(|_| has_text_delta.load(Ordering::Relaxed)) {
-                output.push(model_info_delta(model));
-            }
-            output.push(b"data: [DONE]\n\n".to_vec());
-            continue;
-        }
-
-        let (prompt, completion) = adapter.extract_sse_usage(payload);
-        if prompt > 0 { prompt_tokens.store(prompt, Ordering::Relaxed); }
-        if completion > 0 { completion_tokens.store(completion, Ordering::Relaxed); }
-
-        if let Some(transformed) = adapter.transform_sse_line(payload) {
-            if let Ok(value) = serde_json::from_str::<Value>(&transformed) {
-                if stream_chunk_has_text_delta(&value) {
-                    has_text_delta.store(true, Ordering::Relaxed);
+        if let Some(payload) = line.strip_prefix("data: ") {
+            if payload == "[DONE]" {
+                if !done_state.seen_done {
+                    done_state.seen_done = true;
+                    if let Some(model) = model_info.filter(|_| {
+                        has_text_delta.load(Ordering::Relaxed) && !done_state.appended_model_info
+                    }) {
+                        output.push(model_info_delta(model));
+                        done_state.appended_model_info = true;
+                    }
+                    output.push(b"data: [DONE]\n\n".to_vec());
                 }
+                continue;
             }
-            output.push(format!("data: {transformed}\n\n").into_bytes());
+
+            let (prompt, completion) = adapter.extract_sse_usage(payload);
+            if prompt > 0 { prompt_tokens.store(prompt, Ordering::Relaxed); }
+            if completion > 0 { completion_tokens.store(completion, Ordering::Relaxed); }
+
+            if let Some(transformed) = adapter.transform_sse_line(payload) {
+                if let Ok(value) = serde_json::from_str::<Value>(&transformed) {
+                    if stream_chunk_has_text_delta(&value) {
+                        has_text_delta.store(true, Ordering::Relaxed);
+                    }
+                }
+                output.push(format!("data: {transformed}\n\n").into_bytes());
+            }
         }
     }
 
@@ -840,6 +875,7 @@ fn append_and_parse_sse(
     has_sse_error: &Arc<AtomicBool>,
     has_text_delta: &Arc<AtomicBool>,
     model_info: Option<&str>,
+    done_state: &mut SseDoneState,
 ) -> Option<Bytes> {
     buffer.push_str(&String::from_utf8_lossy(chunk));
     let mut saw_done = false;
@@ -849,25 +885,35 @@ fn append_and_parse_sse(
         if line.ends_with('\n') { line.pop(); }
         if line.ends_with('\r') { line.pop(); }
 
-        let Some(payload) = line.strip_prefix("data: ") else { continue };
-        if payload == "[DONE]" {
-            saw_done = true;
-            continue;
-        }
+        if let Some(payload) = line.strip_prefix("data: ") {
+            if payload == "[DONE]" {
+                if !done_state.seen_done {
+                    done_state.seen_done = true;
+                    saw_done = true;
+                }
+                continue;
+            }
 
-        let Ok(value) = serde_json::from_str::<Value>(payload) else { continue };
-        if value.get("error").is_some() {
-            has_sse_error.store(true, Ordering::Relaxed);
+            let Ok(value) = serde_json::from_str::<Value>(payload) else { continue };
+            // 只有 error 值是非 null 对象时才算真正的错误
+            // 修复: value.get("error").is_some() 对 "error": null 也会返回 true，导致误判
+            if let Some(err) = value.get("error") {
+                if !err.is_null() {
+                    has_sse_error.store(true, Ordering::Relaxed);
+                }
+            }
+            if stream_chunk_has_text_delta(&value) {
+                has_text_delta.store(true, Ordering::Relaxed);
+            }
+            let (prompt, completion) = extract_usage_tokens(&value);
+            if prompt > 0 { prompt_tokens.store(prompt, Ordering::Relaxed); }
+            if completion > 0 { completion_tokens.store(completion, Ordering::Relaxed); }
         }
-        if stream_chunk_has_text_delta(&value) {
-            has_text_delta.store(true, Ordering::Relaxed);
-        }
-        let (prompt, completion) = extract_usage_tokens(&value);
-        if prompt > 0 { prompt_tokens.store(prompt, Ordering::Relaxed); }
-        if completion > 0 { completion_tokens.store(completion, Ordering::Relaxed); }
     }
 
-    let Some(model) = model_info.filter(|_| saw_done && has_text_delta.load(Ordering::Relaxed)) else {
+    let Some(model) = model_info.filter(|_| {
+        saw_done && has_text_delta.load(Ordering::Relaxed) && !done_state.appended_model_info
+    }) else {
         return None;
     };
 
@@ -875,6 +921,8 @@ fn append_and_parse_sse(
     let Some(pos) = chunk.windows(marker.len()).position(|window| window == marker) else {
         return None;
     };
+
+    done_state.appended_model_info = true;
 
     let mut output = Vec::with_capacity(chunk.len() + 64 + model.len());
     output.extend_from_slice(&chunk[..pos]);
@@ -1153,6 +1201,7 @@ data: [DONE]\n"
             &completion_tokens,
             &Arc::new(AtomicBool::new(false)),
             None,
+            &mut SseDoneState::default(),
         )
         .expect("transformed output");
         let output = String::from_utf8(output.to_vec()).expect("valid utf8");
@@ -1163,8 +1212,131 @@ data: [DONE]\n"
     }
 
     #[test]
-    fn completed_stream_success_allows_zero_usage_tokens() {
-        assert!(is_completed_stream_success(200, false, 1, 128));
+    fn dropped_stream_success_only_depends_on_status_code() {
+        assert!(is_dropped_stream_success(200, 0, 0));
+        assert!(!is_dropped_stream_success(500, 999, 999));
+    }
+
+    #[test]
+    fn append_and_parse_sse_error_null_not_marked_as_error() {
+        let mut buffer = String::new();
+        let chunk = Bytes::from_static(b"data: {\"error\":null}\n");
+        let prompt_tokens = Arc::new(AtomicI64::new(0));
+        let completion_tokens = Arc::new(AtomicI64::new(0));
+        let has_sse_error = Arc::new(AtomicBool::new(false));
+        let has_text_delta = Arc::new(AtomicBool::new(false));
+        let mut done_state = SseDoneState::default();
+
+        let output = append_and_parse_sse(
+            &mut buffer,
+            &chunk,
+            &prompt_tokens,
+            &completion_tokens,
+            &has_sse_error,
+            &has_text_delta,
+            Some("gpt-test"),
+            &mut done_state,
+        );
+
+        assert!(output.is_none());
+        assert!(!has_sse_error.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn append_and_parse_sse_error_object_marked_as_error() {
+        let mut buffer = String::new();
+        let chunk = Bytes::from_static(b"data: {\"error\":{\"message\":\"boom\"}}\n");
+        let prompt_tokens = Arc::new(AtomicI64::new(0));
+        let completion_tokens = Arc::new(AtomicI64::new(0));
+        let has_sse_error = Arc::new(AtomicBool::new(false));
+        let has_text_delta = Arc::new(AtomicBool::new(false));
+        let mut done_state = SseDoneState::default();
+
+        let output = append_and_parse_sse(
+            &mut buffer,
+            &chunk,
+            &prompt_tokens,
+            &completion_tokens,
+            &has_sse_error,
+            &has_text_delta,
+            Some("gpt-test"),
+            &mut done_state,
+        );
+
+        assert!(output.is_none());
+        assert!(has_sse_error.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn append_and_parse_sse_duplicate_done_only_appends_model_once() {
+        let mut buffer = String::new();
+        let first_chunk = Bytes::from_static(
+            b"data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\
+data: [DONE]\n"
+        );
+        let second_chunk = Bytes::from_static(b"data: [DONE]\n");
+        let prompt_tokens = Arc::new(AtomicI64::new(0));
+        let completion_tokens = Arc::new(AtomicI64::new(0));
+        let has_sse_error = Arc::new(AtomicBool::new(false));
+        let has_text_delta = Arc::new(AtomicBool::new(false));
+        let mut done_state = SseDoneState::default();
+
+        let first_output = append_and_parse_sse(
+            &mut buffer,
+            &first_chunk,
+            &prompt_tokens,
+            &completion_tokens,
+            &has_sse_error,
+            &has_text_delta,
+            Some("gpt-test"),
+            &mut done_state,
+        )
+        .expect("first done should append model once");
+        let second_output = append_and_parse_sse(
+            &mut buffer,
+            &second_chunk,
+            &prompt_tokens,
+            &completion_tokens,
+            &has_sse_error,
+            &has_text_delta,
+            Some("gpt-test"),
+            &mut done_state,
+        );
+
+        let first_text = String::from_utf8(first_output.to_vec()).expect("valid utf8");
+        assert_eq!(first_text.matches("model: gpt-test").count(), 1);
+        assert!(second_output.is_none());
+    }
+
+    #[test]
+    fn transform_sse_chunk_duplicate_done_only_outputs_single_done_and_model_once() {
+        let adapter = get_adapter("claude");
+        let chunk = Bytes::from_static(
+            b"data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\
+data: [DONE]\n\
+data: [DONE]\n"
+        );
+        let mut buffer = String::new();
+        let prompt_tokens = Arc::new(AtomicI64::new(0));
+        let completion_tokens = Arc::new(AtomicI64::new(0));
+        let has_text_delta = Arc::new(AtomicBool::new(false));
+        let mut done_state = SseDoneState::default();
+
+        let output = transform_sse_chunk(
+            &chunk,
+            &mut buffer,
+            &adapter,
+            &prompt_tokens,
+            &completion_tokens,
+            &has_text_delta,
+            Some("claude-3"),
+            &mut done_state,
+        )
+        .expect("transformed output");
+
+        let output = String::from_utf8(output.to_vec()).expect("valid utf8");
+        assert_eq!(output.matches("data: [DONE]").count(), 1);
+        assert_eq!(output.matches("model: claude-3").count(), 1);
     }
 
     #[test]
@@ -1176,10 +1348,32 @@ data: [DONE]\n"
     }
 
     #[test]
-    fn dropped_stream_success_still_requires_usage_tokens() {
-        assert!(is_dropped_stream_success(200, 1, 0));
-        assert!(is_dropped_stream_success(200, 0, 1));
-        assert!(!is_dropped_stream_success(200, 0, 0));
-        assert!(!is_dropped_stream_success(502, 1, 1));
+    fn request_structured_output_blocks_model_info_but_tools_do_not() {
+        let tools_body = serde_json::json!({
+            "model": "auto",
+            "messages": [{"role": "user", "content": "hi"}],
+            "tools": [{"type": "function", "function": {"name": "run"}}]
+        });
+        assert!(!request_uses_structured_output(&tools_body));
+
+        let tool_choice_body = serde_json::json!({
+            "model": "auto",
+            "messages": [{"role": "user", "content": "hi"}],
+            "tool_choice": "auto"
+        });
+        assert!(!request_uses_structured_output(&tool_choice_body));
+
+        let structured_body = serde_json::json!({
+            "model": "auto",
+            "messages": [{"role": "user", "content": "hi"}],
+            "response_format": {"type": "json_object"}
+        });
+        assert!(request_uses_structured_output(&structured_body));
+
+        let plain_body = serde_json::json!({
+            "model": "auto",
+            "messages": [{"role": "user", "content": "hi"}]
+        });
+        assert!(!request_uses_structured_output(&plain_body));
     }
 }

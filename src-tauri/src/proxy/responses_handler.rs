@@ -438,6 +438,36 @@ fn sse_done() -> Bytes {
     Bytes::from("data: [DONE]\n\n")
 }
 
+fn append_utf8_safe(buffer: &mut String, remainder: &mut Vec<u8>, bytes: &[u8]) {
+    remainder.extend_from_slice(bytes);
+
+    match std::str::from_utf8(remainder) {
+        Ok(valid) => {
+            buffer.push_str(valid);
+            remainder.clear();
+        }
+        Err(err) => {
+            let valid_up_to = err.valid_up_to();
+            if valid_up_to > 0 {
+                let valid = std::str::from_utf8(&remainder[..valid_up_to])
+                    .expect("valid UTF-8 prefix from valid_up_to");
+                buffer.push_str(valid);
+                remainder.drain(..valid_up_to);
+            }
+
+            if err.error_len().is_some() && !remainder.is_empty() {
+                buffer.push_str(&String::from_utf8_lossy(remainder));
+                remainder.clear();
+            }
+        }
+    }
+}
+
+fn sse_data_payload(line: &str) -> Option<&str> {
+    let payload = line.strip_prefix("data:")?;
+    Some(payload.strip_prefix(' ').unwrap_or(payload))
+}
+
 // ─── Handler ─────────────────────────────────────────────────────────
 
 /// POST /v1/responses — Responses API compatibility endpoint.
@@ -747,6 +777,7 @@ let req_body: Value = match serde_json::from_slice(&body_bytes) {
 
         let upstream_stream = upstream_body.into_data_stream();
         let mut buffer = String::new();
+        let mut utf8_remainder: Vec<u8> = Vec::new();
         let mut full_content = String::new();
         let mut usage = json!({});
         let mut finish_reason: Option<String> = None;
@@ -792,8 +823,7 @@ let req_body: Value = match serde_json::from_slice(&body_bytes) {
                             break;
                         }
 
-                        let chunk_str = String::from_utf8_lossy(&bytes);
-                        buffer.push_str(&chunk_str);
+                        append_utf8_safe(&mut buffer, &mut utf8_remainder, &bytes);
 
                         // Process complete SSE lines in buffer
                         while let Some(newline_pos) = buffer.find('\n') {
@@ -803,7 +833,7 @@ let req_body: Value = match serde_json::from_slice(&body_bytes) {
 
                             if line.is_empty() { continue; }
 
-                            if let Some(data) = line.strip_prefix("data: ") {
+                            if let Some(data) = sse_data_payload(line) {
                                 if data == "[DONE]" {
                                     // ── Stream complete: emit finalization events ──
 
@@ -1748,5 +1778,30 @@ mod tests {
         assert_eq!(msgs[0]["content"]["type"], "custom_tool_result");
         assert_eq!(msgs[0]["content"]["id"], "item_1");
         assert_eq!(msgs[0]["content"]["payload"]["ok"], true);
+    }
+
+    #[test]
+    fn test_append_utf8_safe_preserves_split_multibyte_content() {
+        let mut buffer = String::new();
+        let mut remainder = Vec::new();
+        let text = "data: {\"delta\":\"你好世界\"}\n\n";
+        let bytes = text.as_bytes();
+        let split_at = bytes.iter().position(|byte| *byte >= 0x80).unwrap() + 1;
+
+        append_utf8_safe(&mut buffer, &mut remainder, &bytes[..split_at]);
+        assert!(!buffer.contains('�'));
+        assert!(!remainder.is_empty());
+
+        append_utf8_safe(&mut buffer, &mut remainder, &bytes[split_at..]);
+        assert_eq!(buffer, text);
+        assert!(remainder.is_empty());
+        assert!(!buffer.contains('�'));
+    }
+
+    #[test]
+    fn test_sse_data_payload_accepts_optional_space() {
+        assert_eq!(sse_data_payload("data: {\"ok\":true}"), Some("{\"ok\":true}"));
+        assert_eq!(sse_data_payload("data:{\"ok\":true}"), Some("{\"ok\":true}"));
+        assert_eq!(sse_data_payload("event: message"), None);
     }
 }
