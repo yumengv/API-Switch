@@ -535,7 +535,9 @@ function ChannelRow({
             <div className="truncate font-medium flex items-center gap-1">
               {channel.name}
               {channel.notes && (
-                <FileText className="h-3 w-3 text-muted-foreground shrink-0" title={channel.notes} />
+                <span title={channel.notes}>
+                  <FileText className="h-3 w-3 text-muted-foreground shrink-0" />
+                </span>
               )}
             </div>
           </div>
@@ -821,10 +823,6 @@ const clearAllSelected = () => {
     if (saving || fetchingModels) return;
     if (!canSave) {
       setError('请填写渠道名称、Base URL 和 API Key 后再保存');
-      return;
-    }
-    if (!isEdit && selectedModels.length === 0) {
-      setError('请至少选择一个模型后再保存');
       return;
     }
     setSaving(true);
