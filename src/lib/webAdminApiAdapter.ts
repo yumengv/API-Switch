@@ -12,6 +12,7 @@ import type {
 import type { DashboardFilter, DashboardStats, ChartDataPoint, ModelRanking, UsageLog, UsageLogFilter, PaginatedResult, ApiEntry, AccessKey, AppSettings, VersionedAppSettings, ProxyStatus, TestChatResponse, TranslationRelayPayload, TranslationRelayRequest, TranslationRelayResponse } from '../types';
 
 import { ADMIN_API_PREFIX } from './adminApiConfig';
+import { clearToken, emitAuthExpired, TOKEN_KEY } from './webAuth';
 
 const apiBase = ADMIN_API_PREFIX;
 
@@ -70,7 +71,7 @@ async function request<T>(
     data?: unknown,
     queryParams?: Record<string, unknown> | null
 ): Promise<T> {
-  const token = localStorage.getItem('api-switch-web-admin-token');
+  const token = localStorage.getItem(TOKEN_KEY);
 
   // Build URL with query params for GET requests
   let url = `${apiBase}${path}`;
@@ -116,6 +117,10 @@ async function request<T>(
       message = error?.message || message;
     } catch {
       // ignore non-json response
+    }
+    if (response.status === 401 || response.status === 403) {
+      clearToken();
+      emitAuthExpired({ status: response.status, message });
     }
     throw createHttpError(response.status, message, error);
   }

@@ -4,11 +4,28 @@
  */
 
 const ADMIN_PREFIX = "/admin";
-const TOKEN_KEY = "api-switch-web-admin-token";
+export const TOKEN_KEY = "api-switch-web-admin-token";
 
 export interface LoginResponse {
   token: string;
   expires_at: number;
+}
+
+export type TokenValidationResult =
+  | { status: "valid" }
+  | { status: "invalid"; reason: "unauthorized" | "forbidden" | "expired" }
+  | { status: "unreachable"; message: string }
+  | { status: "error"; message: string };
+
+export const AUTH_EXPIRED_EVENT = "api-switch-auth-expired";
+
+export interface AuthExpiredDetail {
+  status?: number;
+  message: string;
+}
+
+export function emitAuthExpired(detail: AuthExpiredDetail) {
+  window.dispatchEvent(new CustomEvent<AuthExpiredDetail>(AUTH_EXPIRED_EVENT, { detail }));
 }
 
 export interface AdminHttpError extends Error {
@@ -24,14 +41,15 @@ export interface AdminHttpError extends Error {
 function createAdminHttpError(
   status: number,
   fallbackMessage: string,
-  bodyError?: { code?: string; message?: string; retry_after_seconds?: number; remaining_attempts?: number }
+  bodyError?: { code?: string; message?: string; retry_after_seconds?: number; remaining_attempts?: number; details?: { remaining_attempts?: number } }
 ): AdminHttpError {
   const instance = new Error(bodyError?.message || fallbackMessage) as AdminHttpError;
   instance.name = "AdminHttpError";
   instance.status = status;
   instance.code = bodyError?.code;
   instance.retryAfterSeconds = bodyError?.retry_after_seconds;
-  instance.remainingAttempts = bodyError?.remaining_attempts;
+  // 优先读取后端嵌套字段，兼容历史顶层字段
+  instance.remainingAttempts = bodyError?.details?.remaining_attempts ?? bodyError?.remaining_attempts;
   instance.isNetworkError = status === 0 || bodyError?.code === "ENDPOINT_UNREACHABLE";
   instance.isAuthError = status === 401 || status === 403
     || bodyError?.code === "UNAUTHORIZED"
@@ -54,11 +72,18 @@ export function clearToken() {
 }
 
 export async function login(username: string, password: string): Promise<LoginResponse> {
-  const response = await fetch(`${ADMIN_PREFIX}/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password }),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${ADMIN_PREFIX}/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    throw createAdminHttpError(0, message, { code: "ENDPOINT_UNREACHABLE", message });
+  }
+
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     throw createAdminHttpError(response.status, `HTTP ${response.status}`, body.error);
@@ -66,26 +91,49 @@ export async function login(username: string, password: string): Promise<LoginRe
   return response.json();
 }
 
-export async function logout(): Promise<void> {
-  const token = getToken();
-  if (token) {
-    await fetch(`${ADMIN_PREFIX}/logout`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-    }).catch(() => {});
-  }
-  clearToken();
+export interface LogoutResult {
+  confirmed: boolean;
 }
 
-export async function validateToken(): Promise<boolean> {
+export async function logout(): Promise<LogoutResult> {
   const token = getToken();
-  if (!token) return false;
+  if (!token) {
+    clearToken();
+    return { confirmed: true };
+  }
+
+  let confirmed = true;
+  try {
+    const response = await fetch(`${ADMIN_PREFIX}/logout`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    confirmed = response.ok;
+  } catch {
+    confirmed = false;
+  } finally {
+    clearToken();
+  }
+
+  return { confirmed };
+}
+
+export async function validateToken(): Promise<TokenValidationResult> {
+  const token = getToken();
+  if (!token) return { status: "invalid", reason: "expired" };
+
   try {
     const response = await fetch(`${ADMIN_PREFIX}/status`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    return response.ok;
-  } catch {
-    return true; // network error → assume valid
+
+    if (response.ok) return { status: "valid" };
+    if (response.status === 401) return { status: "invalid", reason: "unauthorized" };
+    if (response.status === 403) return { status: "invalid", reason: "forbidden" };
+
+    return { status: "error", message: `Web Admin 状态校验失败：HTTP ${response.status}` };
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    return { status: "unreachable", message };
   }
 }

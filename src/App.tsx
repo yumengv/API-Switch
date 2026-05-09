@@ -1,12 +1,13 @@
-import { useState, useEffect, Suspense, lazy } from "react";
+import { useState, useEffect, Suspense, lazy, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { WelcomeGuide } from "@/components/WelcomeGuide";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { useQuery } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { MainShell, type MainPage } from "@/features/shell/MainShell";
 import { useApiAdapter, isTauriRuntime } from "@/lib/useApiAdapter";
 import { LoginScreen } from "@/components/LoginScreen";
-import { getToken, validateToken, clearToken } from "@/lib/webAuth";
+import { AUTH_EXPIRED_EVENT, clearToken, getToken, logout, validateToken, type AuthExpiredDetail, TOKEN_KEY } from "@/lib/webAuth";
 
 const ApiPoolPage = lazy(() => import("@/pages/ApiPoolPage").then((m) => ({ default: m.ApiPoolPage })));
 const ChannelPage = lazy(() => import("@/pages/ChannelPage").then((m) => ({ default: m.ChannelPage })));
@@ -14,9 +15,16 @@ const TokenPage = lazy(() => import("@/pages/TokenPage").then((m) => ({ default:
 const LogPage = lazy(() => import("@/pages/LogPage").then((m) => ({ default: m.LogPage })));
 const DashboardPage = lazy(() => import("@/pages/DashboardPage").then((m) => ({ default: m.DashboardPage })));
 const SettingsPage = lazy(() => import("@/pages/SettingsPage").then((m) => ({ default: m.SettingsPage })));
+type WebAuthViewState =
+  | { state: "checking" }
+  | { state: "authenticated" }
+  | { state: "login"; message?: string }
+  | { state: "server_unreachable"; message: string }
+  | { state: "expired"; message: string };
+
 const GUIDE_BASE = "https://github.com/wang1970/API-Switch/blob/master/";
 
-function MainApp() {
+function MainApp({ onLogout }: { onLogout?: () => void }) {
   const { i18n } = useTranslation();
   const api = useApiAdapter();
   const isDesktop = isTauriRuntime();
@@ -92,6 +100,7 @@ function MainApp() {
       onUpdateOpen={(url) => openExternal(url)}
       onNavigate={setCurrentPage}
       onOpenGuide={(path) => openExternal(GUIDE_BASE + path)}
+      onLogout={onLogout}
       renderPage={() => (
         <Suspense fallback={<div className="flex items-center justify-center min-h-screen">Loading...</div>}>
           {renderPage()}
@@ -113,28 +122,108 @@ function MainApp() {
  */
 export default function App() {
   const isDesktop = isTauriRuntime();
-  const [webAuth, setWebAuth] = useState<"checking" | "authenticated" | "login">(() =>
-    isDesktop ? "authenticated" : (getToken() ? "checking" : "login")
+  const [webAuth, setWebAuth] = useState<WebAuthViewState>(() =>
+    isDesktop ? { state: "authenticated" } : (getToken() ? { state: "checking" } : { state: "login" })
   );
+
+  const checkWebTokenIdRef = useRef(0);
+
+  const invalidateWebTokenCheck = () => {
+    checkWebTokenIdRef.current += 1;
+  };
+
+  const checkWebToken = () => {
+    setWebAuth({ state: "checking" });
+    const currentId = ++checkWebTokenIdRef.current;
+    validateToken().then((result) => {
+      if (currentId !== checkWebTokenIdRef.current) return;
+      if (result.status === "valid") {
+        setWebAuth({ state: "authenticated" });
+        return;
+      }
+
+      if (result.status === "unreachable") {
+        setWebAuth({ state: "server_unreachable", message: "无法连接 Web Admin 服务，请确认服务正在运行。" });
+        return;
+      }
+
+      clearToken();
+      if (result.status === "invalid") {
+        setWebAuth({ state: "expired", message: "登录已过期，请重新登录。" });
+      } else {
+        setWebAuth({ state: "login", message: result.message });
+      }
+    });
+  };
+
+  const handleLogout = () => {
+    invalidateWebTokenCheck();
+    logout().then((result) => {
+      invalidateWebTokenCheck();
+      setWebAuth({ state: "login" });
+      if (result.confirmed) toast.success("已退出登录");
+      else toast.warning("已清除本地登录状态，服务器登出未确认");
+    });
+  };
 
   // Validate existing token on mount (web only)
   useEffect(() => {
-    if (isDesktop || webAuth !== "checking") return;
-    validateToken().then((valid) => {
-      if (valid) setWebAuth("authenticated");
-      else { clearToken(); setWebAuth("login"); }
-    });
-  }, [isDesktop, webAuth]);
+    if (isDesktop || webAuth.state !== "checking") return;
+    checkWebToken();
+  }, [isDesktop, webAuth.state]);
+
+  useEffect(() => {
+    if (isDesktop) return;
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<AuthExpiredDetail>).detail;
+      // 仅在当前仍处于认证或校验中时处理，避免重复状态抖动。
+      if (webAuth.state !== "authenticated" && webAuth.state !== "checking") return;
+      invalidateWebTokenCheck();
+      clearToken();
+      setWebAuth({ state: "expired", message: detail?.message || "登录已过期，请重新登录。" });
+      toast.error("登录已过期，请重新登录", { id: "web-admin-auth-expired" });
+    };
+    window.addEventListener(AUTH_EXPIRED_EVENT, handler);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handler);
+  }, [isDesktop, webAuth.state]);
+
+  useEffect(() => {
+    if (isDesktop) return;
+    const handler = (event: StorageEvent) => {
+      if (event.key !== TOKEN_KEY) return;
+      if (!event.newValue) {
+        invalidateWebTokenCheck();
+        // 仅在当前已认证时切换状态，避免覆盖有效状态流转
+        if (webAuth.state === "authenticated") {
+          setWebAuth({ state: "login", message: "已在其他页面退出登录。" });
+          toast.info("已在其他页面退出登录", { id: "web-admin-storage-logout" });
+        }
+        return;
+      }
+      // token 被替换：重新校验以同步其他标签页的登录状态
+      if (webAuth.state !== "checking") {
+        checkWebToken();
+      }
+    };
+    window.addEventListener("storage", handler);
+    return () => window.removeEventListener("storage", handler);
+  }, [isDesktop, webAuth.state]);
 
   if (isDesktop) return <MainApp />;
 
-  if (webAuth === "checking") {
+  if (webAuth.state === "checking") {
     return <div className="flex items-center justify-center min-h-screen text-muted-foreground">Loading...</div>;
   }
 
-  if (webAuth === "login") {
-    return <LoginScreen onAuthenticated={() => setWebAuth("authenticated")} />;
+  if (webAuth.state === "login" || webAuth.state === "server_unreachable" || webAuth.state === "expired") {
+    return (
+      <LoginScreen
+        message={webAuth.message}
+        onRetry={webAuth.state === "server_unreachable" ? checkWebToken : undefined}
+        onAuthenticated={() => setWebAuth({ state: "authenticated" })}
+      />
+    );
   }
 
-  return <MainApp />;
+  return <MainApp onLogout={handleLogout} />;
 }

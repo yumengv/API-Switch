@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Power } from "lucide-react";
+import { toast } from "sonner";
 import { login, setToken, clearToken, type AdminHttpError } from "@/lib/webAuth";
 
 function formatSeconds(seconds?: number): string {
@@ -12,6 +13,7 @@ function getErrorMessage(error: unknown, fallback: string): string {
   if (!error || !(error instanceof Error)) return fallback;
   const adminError = error as AdminHttpError;
   if (adminError.isRateLimitError) return `登录尝试过于频繁，请在 ${formatSeconds(adminError.retryAfterSeconds)}。`;
+  if (adminError.isNetworkError) return "无法连接 Web Admin 服务，请确认服务正在运行。";
   if (adminError.code === "INVALID_CREDENTIALS") {
     if (typeof adminError.remainingAttempts === "number") {
       return `用户名或密码错误，还可尝试 ${adminError.remainingAttempts} 次。`;
@@ -22,7 +24,13 @@ function getErrorMessage(error: unknown, fallback: string): string {
   return adminError.message || fallback;
 }
 
-export function LoginScreen({ onAuthenticated }: { onAuthenticated: () => void }) {
+interface LoginScreenProps {
+  onAuthenticated: () => void;
+  message?: string;
+  onRetry?: () => void;
+}
+
+export function LoginScreen({ onAuthenticated, message, onRetry }: LoginScreenProps) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -35,10 +43,15 @@ export function LoginScreen({ onAuthenticated }: { onAuthenticated: () => void }
     try {
       const response = await login(username, password);
       setToken(response.token);
+      toast.success("登录成功");
       onAuthenticated();
     } catch (err) {
       clearToken();
-      setError(getErrorMessage(err, "登录失败"));
+      const message = getErrorMessage(err, "登录失败");
+      setError(message);
+      const adminError = err as AdminHttpError;
+      if (adminError?.isRateLimitError) toast.warning(message);
+      else toast.error(message);
     } finally {
       setSubmitting(false);
     }
@@ -55,6 +68,16 @@ export function LoginScreen({ onAuthenticated }: { onAuthenticated: () => void }
           </div>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
+          {message && (
+            <div className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
+              <div>{message}</div>
+              {onRetry && (
+                <button type="button" onClick={onRetry} className="mt-2 text-primary underline-offset-2 hover:underline">
+                  重试连接
+                </button>
+              )}
+            </div>
+          )}
           <label className="block space-y-1.5">
             <span className="text-sm font-medium">用户名</span>
             <input
