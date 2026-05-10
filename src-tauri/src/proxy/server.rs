@@ -2,7 +2,7 @@ use super::circuit_breaker::CircuitBreaker;
 use super::handlers;
 use super::responses_handler;
 use crate::database::{AppSettings, Database};
-use axum::routing::{delete, get, post};
+use axum::routing::{get, post};
 use axum::Router;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

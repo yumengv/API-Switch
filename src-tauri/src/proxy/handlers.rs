@@ -2,9 +2,7 @@ use super::auth;
 use super::forwarder;
 use super::protocol::{
     azure_to_openai_request, claude_to_openai_request, gemini_to_openai_request,
-    openai_to_azure_response, openai_to_claude_response, openai_to_gemini_response,
-    transform_azure_error, transform_claude_error, transform_gemini_error, AzureSSETransformer,
-    ClaudeSSETransformer, GeminiSSETransformer,
+    openai_to_claude_response, openai_to_gemini_response, ClaudeSSETransformer,
 };
 use super::router;
 use super::server::ProxyState;
@@ -221,7 +219,11 @@ pub async fn handle_messages(
                     // Need more data from upstream
                     match stream.next().await {
                         Some(Ok(chunk)) => {
-                            super::sse::append_utf8_safe(&mut sse_buffer, &mut sse_utf8_remainder, &chunk);
+                            super::sse::append_utf8_safe(
+                                &mut sse_buffer,
+                                &mut sse_utf8_remainder,
+                                &chunk,
+                            );
                             // Continue loop to process buffered data
                         }
                         Some(Err(e)) => {
@@ -497,6 +499,7 @@ pub enum ProxyError {
     #[error("Upstream error {status}: {message}")]
     Upstream { status: u16, message: String },
 
+    #[allow(dead_code)]
     #[error("Bad request: {0}")]
     BadRequest(String),
 }
