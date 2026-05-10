@@ -272,9 +272,13 @@ struct StreamLogGuard {
     prompt_tokens: Arc<AtomicI64>,
     completion_tokens: Arc<AtomicI64>,
     first_token_ms: Arc<AtomicI64>,
+    chunk_count: Arc<AtomicI64>,
+    streamed_bytes: Arc<AtomicI64>,
     status_code: i32,
     start: Instant,
     prior_attempts: Vec<AttemptInfo>,
+    upstream_url: String,
+    response_headers: reqwest::header::HeaderMap,
 }
 
 impl Drop for StreamLogGuard {
@@ -282,6 +286,10 @@ impl Drop for StreamLogGuard {
         if !self.logged.swap(true, Ordering::SeqCst) {
             let prompt_tokens = self.prompt_tokens.load(Ordering::SeqCst);
             let completion_tokens = self.completion_tokens.load(Ordering::SeqCst);
+            let chunk_total = self.chunk_count.load(Ordering::SeqCst);
+            let byte_total = self.streamed_bytes.load(Ordering::SeqCst);
+            let first_token_ms = self.first_token_ms.load(Ordering::SeqCst);
+            let latency_ms = self.start.elapsed().as_millis() as i64;
             let success =
                 is_dropped_stream_success(self.status_code, prompt_tokens, completion_tokens);
             let attempt_path = attempt_path_with_current(
@@ -291,13 +299,24 @@ impl Drop for StreamLogGuard {
                 success,
                 None,
             );
+            let stream_summary = build_stream_diagnostic(
+                "stream_dropped",
+                None,
+                &self.entry,
+                &self.upstream_url,
+                self.status_code,
+                &self.response_headers,
+                chunk_total,
+                byte_total,
+                0, // sse_buffer not available in drop context
+                first_token_ms,
+                latency_ms,
+            );
             let db = self.db.clone();
             let app_handle = self.app_handle.clone();
             let access_key = self.access_key.clone();
             let entry = self.entry.clone();
             let requested_model = self.requested_model.clone();
-            let first_token_ms = self.first_token_ms.load(Ordering::SeqCst);
-            let latency_ms = self.start.elapsed().as_millis() as i64;
             let status_code = self.status_code;
             tokio::spawn(async move {
                 log_usage(
@@ -313,7 +332,7 @@ impl Drop for StreamLogGuard {
                     latency_ms,
                     status_code,
                     success,
-                    None,
+                    Some(stream_summary.as_str()),
                     Some(attempt_path.as_str()),
                     Some(StreamEndReason::Dropped),
                 );
@@ -666,9 +685,13 @@ fn build_streaming_response(
         prompt_tokens: prompt_tokens.clone(),
         completion_tokens: completion_tokens.clone(),
         first_token_ms: first_token_ms.clone(),
+        chunk_count: chunk_count.clone(),
+        streamed_bytes: streamed_bytes.clone(),
         status_code,
         start,
         prior_attempts: prior_attempts.clone(),
+        upstream_url: upstream_url.clone(),
+        response_headers: response_headers.clone(),
     };
 
     let body_stream =
