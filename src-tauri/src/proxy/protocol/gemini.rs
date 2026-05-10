@@ -18,6 +18,16 @@ use super::{join_url, ProtocolAdapter};
 /// - https://ai.google.dev/api/models
 use serde_json::{json, Value};
 
+/// 穿透开关：true = 未知字段保留穿透，false = 只保留已知白名单字段
+///
+/// 默认 true，贯彻「中转翻译器不丢信息」的公理。
+/// 如果发现某个上游/客户端对未知字段返回 400，可临时改为 false 发布紧急版本。
+///
+/// 注：GeminiAdapter 通过 Google OpenAI-compatible endpoint 直通，body 不翻译，
+/// 此常量为阶段 3 预留，阶段 2 暂未使用。
+#[allow(dead_code)]
+const ENABLE_UNKNOWN_FIELD_PASSTHROUGH: bool = true;
+
 pub struct GeminiAdapter;
 
 impl ProtocolAdapter for GeminiAdapter {

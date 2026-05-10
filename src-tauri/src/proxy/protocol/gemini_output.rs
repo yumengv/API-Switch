@@ -1,5 +1,11 @@
 use serde_json::{json, Value};
 
+/// 穿透开关：true = 未知字段保留穿透，false = 只保留已知白名单字段
+///
+/// 默认 true，贯彻「中转翻译器不丢信息」的公理。
+/// 如果发现某个上游/客户端对未知字段返回 400，可临时改为 false 发布紧急版本。
+const ENABLE_UNKNOWN_FIELD_PASSTHROUGH: bool = true;
+
 // ═══════════════════════════════════════════════════════════════════
 //  Public API: Gemini <-> OpenAI format conversion
 // ═══════════════════════════════════════════════════════════════════
@@ -110,6 +116,18 @@ pub fn gemini_to_openai_request(gemini: &Value) -> Value {
         }
     }
 
+    // 公理二：未知字段穿透。保留 Gemini 原始请求里的 safetySettings、cachedContent、
+    // x_future_gemini_field 等官方/未来/自定义字段，避免"中转翻译器"丢信息。
+    if ENABLE_UNKNOWN_FIELD_PASSTHROUGH {
+        if let (Some(src), Some(dst)) = (gemini.as_object(), openai.as_object_mut()) {
+            for (key, value) in src {
+                if !dst.contains_key(key) {
+                    dst.insert(key.clone(), value.clone());
+                }
+            }
+        }
+    }
+
     openai
 }
 
@@ -151,12 +169,6 @@ pub fn openai_to_gemini_response(openai: &Value) -> Value {
         }));
     }
 
-    // Extract model
-    let model = openai
-        .get("model")
-        .and_then(|m| m.as_str())
-        .unwrap_or("gemini");
-
     // Usage mapping
     let usage = openai.get("usage").cloned().unwrap_or(json!({}));
     let prompt_tokens = usage
@@ -168,22 +180,53 @@ pub fn openai_to_gemini_response(openai: &Value) -> Value {
         .and_then(Value::as_i64)
         .unwrap_or(0);
 
-    json!({
-        "candidates": [
-            {
-                "content": {
-                    "parts": parts,
-                    "role": "model"
-                },
-                "finishReason": gemini_finish_reason
-            }
-        ],
-        "usageMetadata": {
-            "promptTokenCount": prompt_tokens,
-            "candidatesTokenCount": candidates_tokens,
-            "totalTokenCount": prompt_tokens + candidates_tokens
+    // 公理二：clone openai 作为基底，edit-in-place 改写 Gemini 特有字段，
+    // 避免白名单 json!({...}) 构造新对象把上游其他字段丢掉。
+    let mut out = openai.clone();
+    if let Some(obj) = out.as_object_mut() {
+        // 新增 Gemini 特有字段
+        obj.insert(
+            "candidates".to_string(),
+            json!([
+                {
+                    "content": {
+                        "parts": parts,
+                        "role": "model"
+                    },
+                    "finishReason": gemini_finish_reason
+                }
+            ]),
+        );
+        obj.insert(
+            "usageMetadata".to_string(),
+            json!({
+                "promptTokenCount": prompt_tokens,
+                "candidatesTokenCount": candidates_tokens,
+                "totalTokenCount": prompt_tokens + candidates_tokens
+            }),
+        );
+
+        // 移除 OpenAI 特有但 Gemini 不用的字段（已翻译成 candidates/usageMetadata）
+        obj.remove("object"); // "chat.completion" 不是 Gemini 语义
+        obj.remove("choices"); // 已翻译成 candidates
+        obj.remove("created"); // Gemini 不用时间戳
+        obj.remove("usage"); // 已翻译成 usageMetadata
+
+        // 如果关了穿透，只保留 Gemini 官方文档已知字段
+        if !ENABLE_UNKNOWN_FIELD_PASSTHROUGH {
+            let gemini_known: std::collections::HashSet<&str> = [
+                "candidates",
+                "usageMetadata",
+                "modelVersion",
+                "promptFeedback",
+            ]
+            .into_iter()
+            .collect();
+            obj.retain(|k, _| gemini_known.contains(k.as_str()));
         }
-    })
+        // 否则（默认）保留 system_fingerprint、x_openai_future_field 等其他字段
+    }
+    out
 }
 
 /// Transform an error into Gemini error format.
