@@ -15,6 +15,9 @@ mod gemini;
 mod gemini_output;
 mod openai;
 
+#[cfg(test)]
+mod roundtrip_tests;
+
 pub use azure_output::{
     azure_to_openai_request, openai_to_azure_response, transform_azure_error, AzureSSETransformer,
 };
