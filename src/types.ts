@@ -24,7 +24,7 @@ export interface Channel {
   updated_at: number;
 }
 
-export type ApiType = "openai" | "claude" | "gemini" | "azure" | "custom";
+export type ApiType = "openai" | "claude" | "gemini" | "azure" | "custom" | "responses";
 
 export const API_TYPE_OPTIONS: { value: ApiType; label: string }[] = [
   { value: "custom", label: "Custom (OpenAI-compatible)" },
@@ -32,6 +32,7 @@ export const API_TYPE_OPTIONS: { value: ApiType; label: string }[] = [
   { value: "claude", label: "Anthropic" },
   { value: "gemini", label: "Google Gemini" },
   { value: "azure", label: "Azure OpenAI" },
+  { value: "responses", label: "OpenAI Responses (Beta)" },
 ];
 
 export const API_TYPE_DEFAULT_URLS: Record<ApiType, string> = {
@@ -40,6 +41,7 @@ export const API_TYPE_DEFAULT_URLS: Record<ApiType, string> = {
   gemini: "https://generativelanguage.googleapis.com",
   azure: "",
   custom: "",
+  responses: "https://api.openai.com",
 };
 
 export interface ModelInfo {

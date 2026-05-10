@@ -38,6 +38,7 @@ const API_TYPES = [
   { value: 'claude', label: 'Claude' },
   { value: 'gemini', label: 'Gemini' },
   { value: 'azure', label: 'Azure' },
+  { value: 'responses', label: 'OpenAI Responses (Beta)' },
 ];
 
 const DEFAULT_FORM: ChannelFormState = {
@@ -182,12 +183,12 @@ export const ChannelManager: React.FC = () => {
     }
     return map;
   }, [entries]);
-const [editing, setEditing] = useState<Channel | null>(null);
-const [dialogOpen, setDialogOpen] = useState(false);
-const [expandedId, setExpandedId] = useState<string | null>(null);
-const [testingChannelId, setTestingChannelId] = useState<string | null>(null);
-const [testResults, setTestResults] = useState<Record<string, string>>({});
-const [deleteTarget, setDeleteTarget] = useState<Channel | null>(null);
+  const [editing, setEditing] = useState<Channel | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [testingChannelId, setTestingChannelId] = useState<string | null>(null);
+  const [testResults, setTestResults] = useState<Record<string, string>>({});
+  const [deleteTarget, setDeleteTarget] = useState<Channel | null>(null);
 
   const error = queryError ? getChannelErrorMessage(queryError, '渠道列表加载失败') : null;
 
@@ -213,23 +214,23 @@ const [deleteTarget, setDeleteTarget] = useState<Channel | null>(null);
     setDialogOpen(true);
   };
 
-const handleDelete = (channel: Channel) => {
-  setDeleteTarget(channel);
-};
+  const handleDelete = (channel: Channel) => {
+    setDeleteTarget(channel);
+  };
 
-const confirmDeleteChannel = async () => {
-  if (!deleteTarget) return;
-  try {
-    await api.channels.delete(deleteTarget.id);
-    if (expandedId === deleteTarget.id) {
-      setExpandedId(null);
+  const confirmDeleteChannel = async () => {
+    if (!deleteTarget) return;
+    try {
+      await api.channels.delete(deleteTarget.id);
+      if (expandedId === deleteTarget.id) {
+        setExpandedId(null);
+      }
+      await queryClient.invalidateQueries({ queryKey: ["channels"] });
+      setDeleteTarget(null);
+    } catch (err) {
+      toast.error(getChannelErrorMessage(err, '删除渠道失败'));
     }
-    await queryClient.invalidateQueries({ queryKey: ["channels"] });
-    setDeleteTarget(null);
-  } catch (err) {
-    toast.error(getChannelErrorMessage(err, '删除渠道失败'));
-  }
-};
+  };
 
   const testAllChannels = async () => {
     if (!channels) return;
@@ -261,142 +262,142 @@ const confirmDeleteChannel = async () => {
     <div className="border border-border bg-card p-6 shadow-sm">
       <div className="space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-semibold">渠道管理</h1>
-          <p className="mt-1 text-sm text-muted-foreground">统一管理上游渠道、模型同步与基础配置。</p>
+          <div>
+            <h1 className="text-xl font-semibold">渠道管理</h1>
+            <p className="mt-1 text-sm text-muted-foreground">统一管理上游渠道、模型同步与基础配置。</p>
+          </div>
+          <Button size="sm" className="gap-1.5" onClick={openCreate}>
+            <Plus className="h-4 w-4" />
+            添加渠道
+          </Button>
         </div>
-        <Button size="sm" className="gap-1.5" onClick={openCreate}>
-          <Plus className="h-4 w-4" />
-          添加渠道
-        </Button>
-      </div>
 
-      {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
+        {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
 
         <div className="overflow-hidden rounded-lg border border-border bg-background">
-        <table className="w-full table-fixed text-sm">
-          <colgroup>
-            <col className="w-[20%]" />
-            <col className="w-24" />
-            <col />
-            <col className="w-24" />
-            <col className="w-24" />
-            <col className="w-24" />
-            <col className="w-32" />
-          </colgroup>
-          <thead className="bg-muted/50">
-            <tr className="border-b border-border">
-              <th className="px-4 py-3 text-left font-medium">渠道名称</th>
-              <th className="px-4 py-3 text-left font-medium">类型</th>
-              <th className="px-4 py-3 text-left font-medium">Base URL</th>
-              <th className="px-4 py-3 text-left font-medium">状态</th>
-              <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
-                <div className="flex items-center gap-1">
-                  <span>响应</span>
-                  <button
-                    type="button"
-                    onClick={testAllChannels}
-                    disabled={testingChannelId !== null}
-                    className="text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
-                    title="一键测速"
-                  >
-                    <RefreshCw className={cn('h-3.5 w-3.5', testingChannelId !== null && 'animate-spin')} />
-                  </button>
-                </div>
-              </th>
-              <th className="px-4 py-3 text-center font-medium">模型</th>
-              <th className="px-4 py-3 text-right font-medium">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-{loading ? (
-<>
-<tr>
-<td className="px-4 py-3">
-<div className="h-4 w-32 animate-pulse bg-muted rounded" />
-</td>
-<td className="px-4 py-3">
-<div className="h-5 w-16 animate-pulse bg-muted rounded" />
-</td>
-<td className="px-4 py-3">
-<div className="h-3 w-48 animate-pulse bg-muted rounded" />
-</td>
-<td className="px-4 py-3">
-<div className="h-5 w-12 animate-pulse bg-muted rounded-full" />
-</td>
-<td className="px-4 py-3">
-<div className="h-3.5 w-3 animate-pulse bg-muted rounded" />
-</td>
-<td className="px-4 py-3">
-<div className="h-3 w-10 animate-pulse bg-muted rounded" />
-</td>
-<td className="px-4 py-3">
-<div className="flex justify-end gap-1">
-<div className="h-7 w-7 animate-pulse bg-muted rounded" />
-<div className="h-7 w-12 animate-pulse bg-muted rounded" />
-</div>
-</td>
-</tr>
-<tr>
-<td className="px-4 py-3">
-<div className="h-4 w-28 animate-pulse bg-muted rounded" />
-</td>
-<td className="px-4 py-3">
-<div className="h-5 w-14 animate-pulse bg-muted rounded" />
-</td>
-<td className="px-4 py-3">
-<div className="h-3 w-44 animate-pulse bg-muted rounded" />
-</td>
-<td className="px-4 py-3">
-<div className="h-5 w-12 animate-pulse bg-muted rounded-full" />
-</td>
-<td className="px-4 py-3">
-<div className="h-3.5 w-3 animate-pulse bg-muted rounded" />
-</td>
-<td className="px-4 py-3">
-<div className="h-3 w-10 animate-pulse bg-muted rounded" />
-</td>
-<td className="px-4 py-3">
-<div className="flex justify-end gap-1">
-<div className="h-7 w-7 animate-pulse bg-muted rounded" />
-<div className="h-7 w-12 animate-pulse bg-muted rounded" />
-</div>
-</td>
-</tr>
-<tr>
-<td className="px-4 py-3">
-<div className="h-4 w-36 animate-pulse bg-muted rounded" />
-</td>
-<td className="px-4 py-3">
-<div className="h-5 w-18 animate-pulse bg-muted rounded" />
-</td>
-<td className="px-4 py-3">
-<div className="h-3 w-52 animate-pulse bg-muted rounded" />
-</td>
-<td className="px-4 py-3">
-<div className="h-5 w-12 animate-pulse bg-muted rounded-full" />
-</td>
-<td className="px-4 py-3">
-<div className="h-3.5 w-3 animate-pulse bg-muted rounded" />
-</td>
-<td className="px-4 py-3">
-<div className="h-3 w-10 animate-pulse bg-muted rounded" />
-</td>
-<td className="px-4 py-3">
-<div className="flex justify-end gap-1">
-<div className="h-7 w-7 animate-pulse bg-muted rounded" />
-<div className="h-7 w-12 animate-pulse bg-muted rounded" />
-</div>
-</td>
-</tr>
-</>
-            ) : channels.length === 0 ? (
-              <tr>
-                <td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">暂无渠道，请先添加渠道。</td>
+          <table className="w-full table-fixed text-sm">
+            <colgroup>
+              <col className="w-[20%]" />
+              <col className="w-24" />
+              <col />
+              <col className="w-24" />
+              <col className="w-24" />
+              <col className="w-24" />
+              <col className="w-32" />
+            </colgroup>
+            <thead className="bg-muted/50">
+              <tr className="border-b border-border">
+                <th className="px-4 py-3 text-left font-medium">渠道名称</th>
+                <th className="px-4 py-3 text-left font-medium">类型</th>
+                <th className="px-4 py-3 text-left font-medium">Base URL</th>
+                <th className="px-4 py-3 text-left font-medium">状态</th>
+                <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
+                  <div className="flex items-center gap-1">
+                    <span>响应</span>
+                    <button
+                      type="button"
+                      onClick={testAllChannels}
+                      disabled={testingChannelId !== null}
+                      className="text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+                      title="一键测速"
+                    >
+                      <RefreshCw className={cn('h-3.5 w-3.5', testingChannelId !== null && 'animate-spin')} />
+                    </button>
+                  </div>
+                </th>
+                <th className="px-4 py-3 text-center font-medium">模型</th>
+                <th className="px-4 py-3 text-right font-medium">操作</th>
               </tr>
-            ) : (
-              channels.map((channel) => (
-                <ChannelRow
+            </thead>
+            <tbody>
+              {loading ? (
+                <>
+                  <tr>
+                    <td className="px-4 py-3">
+                      <div className="h-4 w-32 animate-pulse bg-muted rounded" />
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="h-5 w-16 animate-pulse bg-muted rounded" />
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="h-3 w-48 animate-pulse bg-muted rounded" />
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="h-5 w-12 animate-pulse bg-muted rounded-full" />
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="h-3.5 w-3 animate-pulse bg-muted rounded" />
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="h-3 w-10 animate-pulse bg-muted rounded" />
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex justify-end gap-1">
+                        <div className="h-7 w-7 animate-pulse bg-muted rounded" />
+                        <div className="h-7 w-12 animate-pulse bg-muted rounded" />
+                      </div>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="px-4 py-3">
+                      <div className="h-4 w-28 animate-pulse bg-muted rounded" />
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="h-5 w-14 animate-pulse bg-muted rounded" />
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="h-3 w-44 animate-pulse bg-muted rounded" />
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="h-5 w-12 animate-pulse bg-muted rounded-full" />
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="h-3.5 w-3 animate-pulse bg-muted rounded" />
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="h-3 w-10 animate-pulse bg-muted rounded" />
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex justify-end gap-1">
+                        <div className="h-7 w-7 animate-pulse bg-muted rounded" />
+                        <div className="h-7 w-12 animate-pulse bg-muted rounded" />
+                      </div>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="px-4 py-3">
+                      <div className="h-4 w-36 animate-pulse bg-muted rounded" />
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="h-5 w-18 animate-pulse bg-muted rounded" />
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="h-3 w-52 animate-pulse bg-muted rounded" />
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="h-5 w-12 animate-pulse bg-muted rounded-full" />
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="h-3.5 w-3 animate-pulse bg-muted rounded" />
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="h-3 w-10 animate-pulse bg-muted rounded" />
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex justify-end gap-1">
+                        <div className="h-7 w-7 animate-pulse bg-muted rounded" />
+                        <div className="h-7 w-12 animate-pulse bg-muted rounded" />
+                      </div>
+                    </td>
+                  </tr>
+                </>
+              ) : channels.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">暂无渠道，请先添加渠道。</td>
+                </tr>
+              ) : (
+                channels.map((channel) => (
+                  <ChannelRow
                     key={channel.id}
                     channel={channel}
                     expanded={expandedId === channel.id}
@@ -409,31 +410,31 @@ const confirmDeleteChannel = async () => {
                     entryCountMap={entryCountMap}
                   />
 
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
 
-<ChannelEditorDialog
-  open={dialogOpen}
-  channel={editing}
-  onOpenChange={setDialogOpen}
-  onSaved={refreshChannels}
-/>
-<Dialog open={!!deleteTarget} onOpenChange={(v) => !v && setDeleteTarget(null)}>
-  <DialogContent>
-<DialogHeader><DialogTitle>{t("common.deleteTitle")}</DialogTitle></DialogHeader>
-<p className="text-sm text-muted-foreground">{t("common.deleteWarning")}</p>
-    <DialogFooter>
-      <Button variant="outline" onClick={() => setDeleteTarget(null)}>{t("common.cancel")}</Button>
-      <Button variant="destructive" disabled={false} onClick={confirmDeleteChannel}>{t("common.delete")}</Button>
-    </DialogFooter>
-  </DialogContent>
-</Dialog>
-</div>
-</div>
-);
+        <ChannelEditorDialog
+          open={dialogOpen}
+          channel={editing}
+          onOpenChange={setDialogOpen}
+          onSaved={refreshChannels}
+        />
+        <Dialog open={!!deleteTarget} onOpenChange={(v) => !v && setDeleteTarget(null)}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>{t("common.deleteTitle")}</DialogTitle></DialogHeader>
+            <p className="text-sm text-muted-foreground">{t("common.deleteWarning")}</p>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setDeleteTarget(null)}>{t("common.cancel")}</Button>
+              <Button variant="destructive" disabled={false} onClick={confirmDeleteChannel}>{t("common.delete")}</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
+    </div>
+  );
 };
 
 function ChannelRow({
@@ -629,24 +630,24 @@ function ChannelEditorDialog({
   const [endpointVerified, setEndpointVerified] = useState(false);
   const [endpointVerificationMessage, setEndpointVerificationMessage] = useState<string | null>(null);
   const [saveStage, setSaveStage] = useState<string | null>(null);
-  
+
   const probeSeqRef = React.useRef(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const isEdit = !!channel;
 
-useEffect(() => {
-  if (!open) return;
-  setError(null);
-  setSaving(false);
-  setAvailableModels([]);
-  setSelectedModels([]);
-  setModelSearch('');
-  setShowApiKey(false);
-  setEndpointVerified(false);
-  setEndpointVerificationMessage(null);
-  setModelsValidated(!!channel && ((channel.available_models?.length || 0) > 0));
+  useEffect(() => {
+    if (!open) return;
+    setError(null);
+    setSaving(false);
+    setAvailableModels([]);
+    setSelectedModels([]);
+    setModelSearch('');
+    setShowApiKey(false);
+    setEndpointVerified(false);
+    setEndpointVerificationMessage(null);
+    setModelsValidated(!!channel && ((channel.available_models?.length || 0) > 0));
     if (channel) {
       setForm(channelToForm(channel));
       setAvailableModels(channel.available_models || []);
@@ -725,7 +726,7 @@ useEffect(() => {
         existingModels = new Set(
           entries.filter((entry) => entry.channel_id === channelId).map((entry) => entry.model.toLowerCase()),
         );
-      } catch {}
+      } catch { }
     }
 
     const selected = new Set<string>();
@@ -746,78 +747,78 @@ useEffect(() => {
     return Array.from(selected);
   }, [api]);
 
-const handleFetchModels = async () => {
-  if (probingUrl) {
-    setError('URL 还在检测中，请稍后再试');
-    return;
-  }
-
-  let probe = urlProbe;
-  if (!probe) {
-    setProbingUrl(true);
-    try {
-      probe = await api.channels.probeUrl(form.base_url.trim()) as { reachable: boolean; latency_ms: number; status_code?: number; detected_type?: string; message: string };
-      setUrlProbe(probe);
-    } catch {
-      probe = { reachable: false, status_code: undefined, latency_ms: 0, detected_type: undefined, message: 'Probe failed' };
-      setUrlProbe(probe);
-    } finally {
-      setProbingUrl(false);
+  const handleFetchModels = async () => {
+    if (probingUrl) {
+      setError('URL 还在检测中，请稍后再试');
+      return;
     }
-  }
 
-  if (!probe.reachable) {
-    setError(`URL 不可达：${probe.message}`);
-    return;
-  }
+    let probe = urlProbe;
+    if (!probe) {
+      setProbingUrl(true);
+      try {
+        probe = await api.channels.probeUrl(form.base_url.trim()) as { reachable: boolean; latency_ms: number; status_code?: number; detected_type?: string; message: string };
+        setUrlProbe(probe);
+      } catch {
+        probe = { reachable: false, status_code: undefined, latency_ms: 0, detected_type: undefined, message: 'Probe failed' };
+        setUrlProbe(probe);
+      } finally {
+        setProbingUrl(false);
+      }
+    }
 
-  setFetchingModels(true);
-  setModelsValidated(false);
-  setError(null);
-  try {
-    const result = await api.channels.fetchModelsDirect(form.api_type, form.base_url, form.api_key, false);
-    setForm((prev) => ({
-      ...prev,
-      api_type: result.detected_type,
-      base_url: result.corrected_base_url || prev.base_url,
-    }));
-    setEndpointVerified(true);
-    setEndpointVerificationMessage(`端点校对通过，已识别为 ${result.detected_type.toUpperCase()}`);
-    setModelsValidated(true);
-    const normalizedModels: ModelInfo[] = (result.models || []).map((item, index) => ({
-      id: String(item.id ?? item.name ?? index),
-      name: String(item.name ?? ''),
-      owned_by: typeof item.owned_by === 'string' ? item.owned_by : undefined,
-    })).filter((item) => item.name);
-    setAvailableModels(normalizedModels);
-    const nextSelected = await autoSelectModels(normalizedModels, channel?.id);
-    setSelectedModels(nextSelected);
-  } catch (err) {
-    setError(getChannelErrorMessage(err, '获取模型列表失败'));
-  } finally {
-    setFetchingModels(false);
-  }
-};
+    if (!probe.reachable) {
+      setError(`URL 不可达：${probe.message}`);
+      return;
+    }
 
-const toggleModel = (modelName: string) => {
-  setSelectedModels((prev) =>
-    prev.includes(modelName)
-      ? prev.filter((m) => m !== modelName)
-      : [...prev, modelName],
-  );
-};
+    setFetchingModels(true);
+    setModelsValidated(false);
+    setError(null);
+    try {
+      const result = await api.channels.fetchModelsDirect(form.api_type, form.base_url, form.api_key, false);
+      setForm((prev) => ({
+        ...prev,
+        api_type: result.detected_type,
+        base_url: result.corrected_base_url || prev.base_url,
+      }));
+      setEndpointVerified(true);
+      setEndpointVerificationMessage(`端点校对通过，已识别为 ${result.detected_type.toUpperCase()}`);
+      setModelsValidated(true);
+      const normalizedModels: ModelInfo[] = (result.models || []).map((item, index) => ({
+        id: String(item.id ?? item.name ?? index),
+        name: String(item.name ?? ''),
+        owned_by: typeof item.owned_by === 'string' ? item.owned_by : undefined,
+      })).filter((item) => item.name);
+      setAvailableModels(normalizedModels);
+      const nextSelected = await autoSelectModels(normalizedModels, channel?.id);
+      setSelectedModels(nextSelected);
+    } catch (err) {
+      setError(getChannelErrorMessage(err, '获取模型列表失败'));
+    } finally {
+      setFetchingModels(false);
+    }
+  };
 
-const selectAllFiltered = () => {
-  const filtered = modelSearch
-    ? availableModels.filter((m) => m.name.toLowerCase().includes(modelSearch.toLowerCase()))
-    : availableModels;
-  const names = filtered.map((m) => m.name);
-  setSelectedModels((prev) => Array.from(new Set([...prev, ...names])));
-};
+  const toggleModel = (modelName: string) => {
+    setSelectedModels((prev) =>
+      prev.includes(modelName)
+        ? prev.filter((m) => m !== modelName)
+        : [...prev, modelName],
+    );
+  };
 
-const clearAllSelected = () => {
-  setSelectedModels([]);
-};
+  const selectAllFiltered = () => {
+    const filtered = modelSearch
+      ? availableModels.filter((m) => m.name.toLowerCase().includes(modelSearch.toLowerCase()))
+      : availableModels;
+    const names = filtered.map((m) => m.name);
+    setSelectedModels((prev) => Array.from(new Set([...prev, ...names])));
+  };
+
+  const clearAllSelected = () => {
+    setSelectedModels([]);
+  };
 
   const handleSave = async () => {
     if (saving || fetchingModels) return;
