@@ -1,5 +1,6 @@
 use super::circuit_breaker::CircuitBreaker;
 use super::handlers::ProxyError;
+use super::middleware::{CallerKind, ForwarderMiddleware, RequestContext};
 use super::protocol::get_adapter;
 use super::server::ProxyState;
 use crate::database::{AccessKey, ApiEntry, AppSettings, Database};
@@ -355,6 +356,8 @@ pub async fn forward_with_retry(
     requested_model: &str,
     access_key: Option<&AccessKey>,
     is_stream: bool,
+    middleware: &[Box<dyn super::middleware::ForwarderMiddleware>],
+    caller_kind: CallerKind,
 ) -> Result<axum::response::Response, ProxyError> {
     let mut last_error: Option<(String, u16)> = None;
     let mut attempts: Vec<AttemptInfo> = Vec::new();
@@ -380,6 +383,8 @@ pub async fn forward_with_retry(
             access_key,
             is_stream,
             attempts.clone(),
+            middleware,
+            &caller_kind,
         )
         .await
         {
@@ -476,6 +481,8 @@ async fn forward_single(
     access_key: Option<&AccessKey>,
     is_stream: bool,
     prior_attempts: Vec<AttemptInfo>,
+    middleware: &[Box<dyn super::middleware::ForwarderMiddleware>],
+    caller_kind: &CallerKind,
 ) -> Result<ForwardResult, ForwardError> {
     let channel = state
         .db
@@ -488,13 +495,13 @@ async fn forward_single(
     let mut upstream_body = body.clone();
     adapter.transform_request(&mut upstream_body, &entry.model);
 
-    if is_stream {
-        if let Some(body_obj) = upstream_body.as_object_mut() {
-            body_obj.insert(
-                "stream_options".to_string(),
-                serde_json::json!({ "include_usage": true }),
-            );
-        }
+    // Call middleware on_request
+    let ctx = RequestContext {
+        caller_kind: caller_kind.clone(),
+        requested_model,
+    };
+    for mw in middleware.iter() {
+        mw.on_request(&mut upstream_body, &ctx);
     }
 
     let mut request = adapter
@@ -548,6 +555,8 @@ async fn forward_single(
             request_start,
             prior_attempts,
             append_model_info,
+            middleware,
+            &ctx,
         );
         Ok(ForwardResult {
             response,
@@ -642,6 +651,8 @@ fn build_streaming_response(
     request_start: std::time::Instant,
     prior_attempts: Vec<AttemptInfo>,
     append_model_info: bool,
+    middleware: &[Box<dyn super::middleware::ForwarderMiddleware>],
+    ctx: &RequestContext,
 ) -> axum::response::Response {
     let response_headers = response.headers().clone();
     let upstream_url = upstream_url.to_string();
@@ -801,6 +812,7 @@ fn build_streaming_response(
                             append_model_info.then_some(entry.model.as_str()),
                             &mut done_state,
                         ) {
+                            // TODO: wire middleware on_sse_chunk when implementations are ready
                             return Poll::Ready(Some(Ok(with_model_info)));
                         }
                     }

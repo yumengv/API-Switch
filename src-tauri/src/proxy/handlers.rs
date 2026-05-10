@@ -87,6 +87,12 @@ pub async fn handle_chat_completions(
     }
 
     // Forward with retry
+    let middleware: Vec<Box<dyn super::middleware::ForwarderMiddleware>> = vec![
+        Box::new(super::middleware::StreamOptionsMiddleware),
+        Box::new(super::middleware::ModelAnnotationMiddleware),
+    ];
+    let caller_kind = super::middleware::CallerKind::OpenAiChat;
+
     forwarder::forward_with_retry(
         &state,
         &resolved,
@@ -95,6 +101,8 @@ pub async fn handle_chat_completions(
         &requested_model,
         access_key.as_ref(),
         is_stream,
+        &middleware,
+        caller_kind,
     )
     .await
 }
@@ -155,7 +163,13 @@ pub async fn handle_messages(
         return Err(ProxyError::NoAvailableProvider(requested_model));
     }
 
-    // Forward with retry
+    // Forward with retry - handle_messages (Claude)
+    let middleware: Vec<Box<dyn super::middleware::ForwarderMiddleware>> = vec![
+        Box::new(super::middleware::StreamOptionsMiddleware),
+        Box::new(super::middleware::ModelAnnotationMiddleware),
+    ];
+    let caller_kind = super::middleware::CallerKind::ClaudeMessages;
+
     let response = forwarder::forward_with_retry(
         &state,
         &resolved,
@@ -164,6 +178,8 @@ pub async fn handle_messages(
         &requested_model,
         access_key.as_ref(),
         is_stream,
+        &middleware,
+        caller_kind,
     )
     .await?;
 
@@ -372,6 +388,13 @@ pub async fn handle_gemini_native(
         return Err(ProxyError::NoAvailableProvider(requested_model));
     }
 
+    // Forward with retry - handle_gemini_native
+    let middleware: Vec<Box<dyn super::middleware::ForwarderMiddleware>> = vec![
+        Box::new(super::middleware::StreamOptionsMiddleware),
+        Box::new(super::middleware::ModelAnnotationMiddleware),
+    ];
+    let caller_kind = super::middleware::CallerKind::GeminiNative;
+
     let response = forwarder::forward_with_retry(
         &state,
         &resolved,
@@ -380,6 +403,8 @@ pub async fn handle_gemini_native(
         &requested_model,
         None,
         false,
+        &middleware,
+        caller_kind,
     )
     .await?;
 
@@ -466,7 +491,13 @@ pub async fn handle_azure_chat(
         return Err(ProxyError::NoAvailableProvider(requested_model));
     }
 
-    // Forward with retry
+    // Forward with retry - handle_azure_chat
+    let middleware: Vec<Box<dyn super::middleware::ForwarderMiddleware>> = vec![
+        Box::new(super::middleware::StreamOptionsMiddleware),
+        Box::new(super::middleware::ModelAnnotationMiddleware),
+    ];
+    let caller_kind = super::middleware::CallerKind::AzureChat;
+
     let response = forwarder::forward_with_retry(
         &state,
         &resolved,
@@ -475,6 +506,8 @@ pub async fn handle_azure_chat(
         &requested_model,
         access_key.as_ref(),
         is_stream,
+        &middleware,
+        caller_kind,
     )
     .await?;
 

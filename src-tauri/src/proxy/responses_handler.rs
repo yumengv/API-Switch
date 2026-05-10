@@ -237,6 +237,13 @@ pub async fn handle_responses(
         return Err(ProxyError::NoAvailableProvider(requested_model));
     }
 
+    // Forward with retry - handle_responses (Responses API)
+    // Note: No ModelAnnotationMiddleware for Responses handler per requirements
+    let middleware: Vec<Box<dyn super::middleware::ForwarderMiddleware>> = vec![
+        Box::new(super::middleware::StreamOptionsMiddleware),
+    ];
+    let caller_kind = super::middleware::CallerKind::Responses;
+
     let upstream_response = forwarder::forward_with_retry(
         &state,
         &resolved,
@@ -245,6 +252,8 @@ pub async fn handle_responses(
         &requested_model,
         access_key.as_ref(),
         is_stream,
+        &middleware,
+        caller_kind,
     )
     .await;
 

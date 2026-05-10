@@ -1,6 +1,7 @@
 use serde_json::Value;
 
 /// 调用方类型
+#[derive(Clone)]
 #[allow(dead_code)]
 pub enum CallerKind {
     OpenAiChat,
