@@ -604,6 +604,15 @@ fn request_uses_structured_output(body: &Value) -> bool {
     body.get("response_format").is_some()
 }
 
+/// 递归扫描 body 的任一位置是否存在 tool calling 相关字段。
+///
+/// **保留但不在生产路径使用**——历史上 `should_append_model_info` 曾用此函数
+/// 在请求侧屏蔽 model 注入（commit 3f5825d），但这会误屏蔽所有 agent 客户端
+/// （Cursor / Claude Code 等几乎每次请求都带 `tools` 字段，即使本轮不实际调用）。
+/// 现在请求侧检查已撤销，真正的 tool-calling 屏蔽在响应侧 `has_tool_calls`。
+///
+/// 函数保留供未来可能的请求侧精细化判断重用，不是死代码。
+#[allow(dead_code)]
 fn contains_tool_calling_field(value: &Value) -> bool {
     match value {
         Value::Object(map) => {
@@ -625,6 +634,7 @@ fn contains_tool_calling_field(value: &Value) -> bool {
     }
 }
 
+#[allow(dead_code)]
 fn request_uses_tool_calling(body: &Value) -> bool {
     contains_tool_calling_field(body)
 }
@@ -646,9 +656,17 @@ fn should_append_model_info(
         .map(|settings| settings.show_conversation_model)
         .unwrap_or(true);
 
-    // 模型名是普通正文注入。结构化输出或工具调用上下文会把正文当协议内容复用，
-    // 不能追加 `model: ...`，否则下游 CALL 循环会夹带模型信息并重复显示。
-    setting_enabled && !request_uses_structured_output(body) && !request_uses_tool_calling(body)
+    // 结构化输出（response_format=json_object/json_schema）必须屏蔽注入：
+    // 正文会被客户端当成 JSON 解析，追加 "model: xxx" 会破坏 JSON 合法性。
+    //
+    // 工具调用上下文不在请求侧屏蔽：agent 客户端（Cursor、Claude Code 等）
+    // 几乎每次请求都带 `tools` 字段声明可用工具，即使本轮不实际调用。
+    // 如果在请求侧一律屏蔽，大部分 agent 场景永远看不到模型名。
+    // 真正的屏蔽发生在响应侧 `has_tool_calls`（参见 build_streaming_response
+    // 和 append_and_parse_sse / transform_sse_chunk 的 gate 条件）：
+    // 只有上游实际返回 tool_calls / function_call 时才跳过注入，避免 CALL
+    // 循环里累积多个 `model: xxx`。
+    setting_enabled && !request_uses_structured_output(body)
 }
 
 fn build_streaming_response(
@@ -1979,6 +1997,81 @@ data: [DONE]\n",
         let text =
             String::from_utf8(output.expect("should have output").to_vec()).expect("valid utf8");
         assert_eq!(text.matches("model: gpt-test").count(), 1);
+        assert!(done_state.appended_model_info);
+    }
+
+    /// 回归测试（历史 bug）：带 tools 定义但本轮响应**没有**实际 tool_calls
+    /// 应该正常注入 model: xxx。
+    ///
+    /// 历史：commit 3f5825d 曾在请求侧检查 body 里是否含任何 tool 字段来屏蔽注入，
+    /// 结果所有 agent 客户端（Cursor / Claude Code 等）都看不到模型名。
+    /// 本测试锁定修复：请求侧检查已撤销，只看响应侧 `has_tool_calls`。
+    #[test]
+    fn should_append_model_info_ignores_request_tools_definition() {
+        // 仅测纯函数行为：request_uses_structured_output 与 request body 是否含 tools 无关
+        let body_with_tools = serde_json::json!({
+            "model": "auto",
+            "messages": [{"role": "user", "content": "你好"}],
+            "tools": [{
+                "type": "function",
+                "function": {"name": "read_file", "parameters": {}}
+            }],
+            "tool_choice": "auto"
+        });
+        // 核心断言：带 tools 的请求不应触发 structured_output 分支
+        assert!(!request_uses_structured_output(&body_with_tools));
+        // 次要断言：contains_tool_calling_field 仍识别 tools 定义（以备未来精细化判断）
+        assert!(contains_tool_calling_field(&body_with_tools));
+    }
+
+    #[test]
+    fn append_and_parse_sse_appends_model_info_when_text_only_response_despite_tools_available() {
+        // Scenario: agent clients (Cursor / Claude Code) always send `tools` definition,
+        // but the actual response contains text only - no tool_calls.
+        // Historic 3f5825d bug: tools-in-request blocked injection entirely -> users
+        //   on agent clients never saw `model: xxx`.
+        // Fix: request-side tool-definition check removed; only response-side
+        //   has_tool_calls blocks injection. A text-only response must inject once.
+        let mut buffer = String::new();
+        let chunk = Bytes::from_static(
+            b"data: {\"choices\":[{\"delta\":{\"content\":\"Hello!\"}}]}\n\
+data: {\"choices\":[{\"delta\":{\"content\":\" How can I help?\"}}]}\n\
+data: {\"choices\":[],\"finish_reason\":\"stop\"}\n\
+data: [DONE]\n",
+        );
+        let prompt_tokens = Arc::new(AtomicI64::new(0));
+        let completion_tokens = Arc::new(AtomicI64::new(0));
+        let has_sse_error = Arc::new(AtomicBool::new(false));
+        let has_text_delta = Arc::new(AtomicBool::new(false));
+        let has_tool_calls = Arc::new(AtomicBool::new(false));
+        let mut done_state = SseDoneState::default();
+
+        let mut remainder = Vec::new();
+        let output = append_and_parse_sse(
+            &mut buffer,
+            &mut remainder,
+            &chunk,
+            &prompt_tokens,
+            &completion_tokens,
+            &has_sse_error,
+            &has_text_delta,
+            &has_tool_calls,
+            Some("gpt-4o"),
+            &mut done_state,
+        );
+
+        assert!(has_text_delta.load(Ordering::Relaxed));
+        assert!(
+            !has_tool_calls.load(Ordering::Relaxed),
+            "response has no tool_calls; has_tool_calls must remain false"
+        );
+        let text = String::from_utf8(
+            output
+                .expect("model: gpt-4o should be injected (regression: tools-in-request no longer blocks)")
+                .to_vec(),
+        )
+        .expect("valid utf8");
+        assert_eq!(text.matches("model: gpt-4o").count(), 1);
         assert!(done_state.appended_model_info);
     }
 
