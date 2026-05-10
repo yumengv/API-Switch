@@ -543,6 +543,7 @@ fn build_streaming_response(
     let chunk_count = Arc::new(AtomicI64::new(0));
     let streamed_bytes = Arc::new(AtomicI64::new(0));
     let has_text_delta = Arc::new(AtomicBool::new(false));
+    let has_tool_calls = Arc::new(AtomicBool::new(false));
     let seen_first_chunk = Arc::new(AtomicBool::new(false));
     let logged = Arc::new(AtomicBool::new(false));
     let mut sse_buffer = String::new();
@@ -639,7 +640,7 @@ fn build_streaming_response(
                     if let Some(transformed) = transform_sse_chunk(
                         &chunk, &mut sse_buffer, &adapter,
                         &prompt_tokens, &completion_tokens,
-                        &has_text_delta,
+                        &has_text_delta, &has_tool_calls,
                         append_model_info.then_some(entry.model.as_str()),
                         &mut done_state,
                     ) {
@@ -656,6 +657,7 @@ fn build_streaming_response(
                         &completion_tokens,
                         &has_sse_error,
                         &has_text_delta,
+                        &has_tool_calls,
                         append_model_info.then_some(entry.model.as_str()),
                         &mut done_state,
                     ) {
@@ -821,6 +823,25 @@ fn stream_chunk_has_model_info_delta(value: &Value, model: &str) -> bool {
         })
 }
 
+/// 检测 chunk 是否包含 tool_calls（函数调用/工具调用）。
+/// 当响应中存在 tool_calls 时，不应附加模型信息，因为：
+/// 1. 工具调用是中间步骤，不是最终文本输出
+/// 2. 下游循环调用时会出现多条模型信息
+fn stream_chunk_has_tool_calls(value: &Value) -> bool {
+    value
+        .get("choices")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|choice| {
+            choice
+                .get("delta")
+                .and_then(|delta| delta.get("tool_calls"))
+                .and_then(Value::as_array)
+                .is_some_and(|tc| !tc.is_empty())
+        })
+}
+
 fn model_info_delta(model: &str) -> Vec<u8> {
     let payload = serde_json::json!({
         "choices": [{
@@ -839,6 +860,7 @@ fn transform_sse_chunk(
     prompt_tokens: &Arc<AtomicI64>,
     completion_tokens: &Arc<AtomicI64>,
     has_text_delta: &Arc<AtomicBool>,
+    has_tool_calls: &Arc<AtomicBool>,
     model_info: Option<&str>,
     done_state: &mut SseDoneState,
 ) -> Option<Bytes> {
@@ -856,6 +878,7 @@ fn transform_sse_chunk(
                     done_state.seen_done = true;
                     if let Some(model) = model_info.filter(|_| {
                         has_text_delta.load(Ordering::Relaxed)
+                            && !has_tool_calls.load(Ordering::Relaxed)
                             && !done_state.appended_model_info
                             && !done_state.upstream_model_info_seen
                     }) {
@@ -875,6 +898,9 @@ fn transform_sse_chunk(
                 if let Ok(value) = serde_json::from_str::<Value>(&transformed) {
                     if stream_chunk_has_text_delta(&value) {
                         has_text_delta.store(true, Ordering::Relaxed);
+                    }
+                    if stream_chunk_has_tool_calls(&value) {
+                        has_tool_calls.store(true, Ordering::Relaxed);
                     }
                     if let Some(model) = model_info {
                         if stream_chunk_has_model_info_delta(&value, model) {
@@ -897,6 +923,7 @@ fn append_and_parse_sse(
     completion_tokens: &Arc<AtomicI64>,
     has_sse_error: &Arc<AtomicBool>,
     has_text_delta: &Arc<AtomicBool>,
+    has_tool_calls: &Arc<AtomicBool>,
     model_info: Option<&str>,
     done_state: &mut SseDoneState,
 ) -> Option<Bytes> {
@@ -928,6 +955,9 @@ fn append_and_parse_sse(
             if stream_chunk_has_text_delta(&value) {
                 has_text_delta.store(true, Ordering::Relaxed);
             }
+            if stream_chunk_has_tool_calls(&value) {
+                has_tool_calls.store(true, Ordering::Relaxed);
+            }
             if let Some(model) = model_info {
                 if stream_chunk_has_model_info_delta(&value, model) {
                     done_state.upstream_model_info_seen = true;
@@ -942,6 +972,7 @@ fn append_and_parse_sse(
     let Some(model) = model_info.filter(|_| {
         saw_done
             && has_text_delta.load(Ordering::Relaxed)
+            && !has_tool_calls.load(Ordering::Relaxed)
             && !done_state.appended_model_info
             && !done_state.upstream_model_info_seen
     }) else {
@@ -1231,6 +1262,7 @@ data: [DONE]\n"
             &prompt_tokens,
             &completion_tokens,
             &Arc::new(AtomicBool::new(false)),
+            &Arc::new(AtomicBool::new(false)),
             None,
             &mut SseDoneState::default(),
         )
@@ -1265,6 +1297,7 @@ data: [DONE]\n"
             &completion_tokens,
             &has_sse_error,
             &has_text_delta,
+            &Arc::new(AtomicBool::new(false)),
             Some("gpt-test"),
             &mut done_state,
         );
@@ -1290,6 +1323,7 @@ data: [DONE]\n"
             &completion_tokens,
             &has_sse_error,
             &has_text_delta,
+            &Arc::new(AtomicBool::new(false)),
             Some("gpt-test"),
             &mut done_state,
         );
@@ -1319,6 +1353,7 @@ data: [DONE]\n"
             &completion_tokens,
             &has_sse_error,
             &has_text_delta,
+            &Arc::new(AtomicBool::new(false)),
             Some("gpt-test"),
             &mut done_state,
         )
@@ -1330,6 +1365,7 @@ data: [DONE]\n"
             &completion_tokens,
             &has_sse_error,
             &has_text_delta,
+            &Arc::new(AtomicBool::new(false)),
             Some("gpt-test"),
             &mut done_state,
         );
@@ -1360,6 +1396,7 @@ data: [DONE]\n"
             &completion_tokens,
             &has_sse_error,
             &has_text_delta,
+            &Arc::new(AtomicBool::new(false)),
             Some("gpt-test"),
             &mut done_state,
         );
@@ -1389,6 +1426,7 @@ data: [DONE]\n"
             &prompt_tokens,
             &completion_tokens,
             &has_text_delta,
+            &Arc::new(AtomicBool::new(false)),
             Some("claude-3"),
             &mut done_state,
         )
@@ -1420,6 +1458,7 @@ data: [DONE]\n"
             &prompt_tokens,
             &completion_tokens,
             &has_text_delta,
+            &Arc::new(AtomicBool::new(false)),
             Some("gpt-test"),
             &mut done_state,
         )
@@ -1466,5 +1505,162 @@ data: [DONE]\n"
             "messages": [{"role": "user", "content": "hi"}]
         });
         assert!(!request_uses_structured_output(&plain_body));
+    }
+
+    // ── tool_calls 场景测试 ─────────────────────────────────────────
+
+    #[test]
+    fn append_and_parse_sse_no_model_info_when_tool_calls_present() {
+        // 场景：响应同时包含文本内容和工具调用（LLM 常见行为）
+        // 预期：不附加模型信息，因为 tool_call 是中间步骤
+        let mut buffer = String::new();
+        let chunk = Bytes::from_static(
+            b"data: {\"choices\":[{\"delta\":{\"content\":\"Let me check.\"}}]}\n\
+data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"\"}}]}}]}\n\
+data: {\"choices\":[],\"finish_reason\":\"tool_calls\"}\n\
+data: [DONE]\n"
+        );
+        let prompt_tokens = Arc::new(AtomicI64::new(0));
+        let completion_tokens = Arc::new(AtomicI64::new(0));
+        let has_sse_error = Arc::new(AtomicBool::new(false));
+        let has_text_delta = Arc::new(AtomicBool::new(false));
+        let has_tool_calls = Arc::new(AtomicBool::new(false));
+        let mut done_state = SseDoneState::default();
+
+        let output = append_and_parse_sse(
+            &mut buffer,
+            &chunk,
+            &prompt_tokens,
+            &completion_tokens,
+            &has_sse_error,
+            &has_text_delta,
+            &has_tool_calls,
+            Some("gpt-test"),
+            &mut done_state,
+        );
+
+        // 有文本内容，所以 has_text_delta 应为 true
+        assert!(has_text_delta.load(Ordering::Relaxed));
+        // 有工具调用，所以 has_tool_calls 应为 true
+        assert!(has_tool_calls.load(Ordering::Relaxed));
+        // 不应附加模型信息
+        assert!(output.is_none());
+        assert!(!done_state.appended_model_info);
+    }
+
+    #[test]
+    fn append_and_parse_sse_no_model_info_when_pure_tool_calls() {
+        // 场景：纯工具调用响应（无文本内容）
+        // 预期：不附加模型信息
+        let mut buffer = String::new();
+        let chunk = Bytes::from_static(
+            b"data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"\"}}]}}]}\n\
+data: {\"choices\":[],\"finish_reason\":\"tool_calls\"}\n\
+data: [DONE]\n"
+        );
+        let prompt_tokens = Arc::new(AtomicI64::new(0));
+        let completion_tokens = Arc::new(AtomicI64::new(0));
+        let has_sse_error = Arc::new(AtomicBool::new(false));
+        let has_text_delta = Arc::new(AtomicBool::new(false));
+        let has_tool_calls = Arc::new(AtomicBool::new(false));
+        let mut done_state = SseDoneState::default();
+
+        let output = append_and_parse_sse(
+            &mut buffer,
+            &chunk,
+            &prompt_tokens,
+            &completion_tokens,
+            &has_sse_error,
+            &has_text_delta,
+            &has_tool_calls,
+            Some("gpt-test"),
+            &mut done_state,
+        );
+
+        // 无文本内容，has_text_delta 应为 false
+        assert!(!has_text_delta.load(Ordering::Relaxed));
+        // 有工具调用，has_tool_calls 应为 true
+        assert!(has_tool_calls.load(Ordering::Relaxed));
+        // 不应附加模型信息
+        assert!(output.is_none());
+        assert!(!done_state.appended_model_info);
+    }
+
+    #[test]
+    fn append_and_parse_sse_appends_model_info_for_pure_text() {
+        // 场景：纯文本响应（无工具调用）
+        // 预期：附加模型信息
+        let mut buffer = String::new();
+        let chunk = Bytes::from_static(
+            b"data: {\"choices\":[{\"delta\":{\"content\":\"Hello!\"}}]}\n\
+data: {\"choices\":[],\"finish_reason\":\"stop\"}\n\
+data: [DONE]\n"
+        );
+        let prompt_tokens = Arc::new(AtomicI64::new(0));
+        let completion_tokens = Arc::new(AtomicI64::new(0));
+        let has_sse_error = Arc::new(AtomicBool::new(false));
+        let has_text_delta = Arc::new(AtomicBool::new(false));
+        let has_tool_calls = Arc::new(AtomicBool::new(false));
+        let mut done_state = SseDoneState::default();
+
+        let output = append_and_parse_sse(
+            &mut buffer,
+            &chunk,
+            &prompt_tokens,
+            &completion_tokens,
+            &has_sse_error,
+            &has_text_delta,
+            &has_tool_calls,
+            Some("gpt-test"),
+            &mut done_state,
+        );
+
+        // 有文本内容
+        assert!(has_text_delta.load(Ordering::Relaxed));
+        // 无工具调用
+        assert!(!has_tool_calls.load(Ordering::Relaxed));
+        // 应附加模型信息
+        let text = String::from_utf8(output.expect("should have output").to_vec()).expect("valid utf8");
+        assert_eq!(text.matches("model: gpt-test").count(), 1);
+        assert!(done_state.appended_model_info);
+    }
+
+    #[test]
+    fn transform_sse_chunk_no_model_info_when_tool_calls_present() {
+        // 场景：Claude 适配器路径，响应包含工具调用
+        // 预期：不附加模型信息
+        let adapter = get_adapter("claude");
+        let chunk = Bytes::from_static(
+            b"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"get_weather\"}}\n\
+data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{}\"}}\n\
+data: {\"type\":\"message_stop\"}\n\
+data: [DONE]\n"
+        );
+        let mut buffer = String::new();
+        let prompt_tokens = Arc::new(AtomicI64::new(0));
+        let completion_tokens = Arc::new(AtomicI64::new(0));
+        let has_text_delta = Arc::new(AtomicBool::new(false));
+        let has_tool_calls = Arc::new(AtomicBool::new(false));
+        let mut done_state = SseDoneState::default();
+
+        let output = transform_sse_chunk(
+            &chunk,
+            &mut buffer,
+            &adapter,
+            &prompt_tokens,
+            &completion_tokens,
+            &has_text_delta,
+            &has_tool_calls,
+            Some("claude-3"),
+            &mut done_state,
+        )
+        .expect("transformed output");
+
+        // 工具调用被转换为 OpenAI 格式的 tool_calls
+        assert!(has_tool_calls.load(Ordering::Relaxed));
+        // 不应附加模型信息
+        let output = String::from_utf8(output.to_vec()).expect("valid utf8");
+        assert_eq!(output.matches("model: claude-3").count(), 0);
+        assert!(!done_state.appended_model_info);
     }
 }
