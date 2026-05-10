@@ -339,6 +339,12 @@ pub struct ClaudeSSETransformer {
     tool_use_count: i64,
     usage_input_tokens: i64,
     usage_output_tokens: i64,
+    /// 是否已经 emit 过 message_delta（用于 P1 修复：
+    /// 当 OpenAI 先发 finish_reason 帧、再发 usage-only 帧时，
+    /// 需要在 usage 真正到达后补发一次 message_delta，
+    /// 否则 Claude 客户端看到的 output_tokens 永远是 0。
+    /// Claude 协议允许 message_delta 多次出现。）
+    message_delta_emitted: bool,
 }
 
 impl ClaudeSSETransformer {
@@ -353,6 +359,7 @@ impl ClaudeSSETransformer {
             tool_use_count: 0,
             usage_input_tokens: 0,
             usage_output_tokens: 0,
+            message_delta_emitted: false,
         }
     }
 
@@ -366,6 +373,27 @@ impl ClaudeSSETransformer {
             return events;
         };
 
+        // Capture usage from the chunk if present (OpenAI stream_options.include_usage).
+        //
+        // NOTE: this block must run BEFORE the `choices=[]` early return below,
+        // otherwise the standalone usage-only frame (帧 4 in the typical
+        // OpenAI sequence: role / content / finish / usage-only / [DONE])
+        // would be dropped and `self.usage_output_tokens` would stay at 0,
+        // making every Claude `message_delta` report `output_tokens: 0` (P1 bug).
+        if let Some(u) = chunk.get("usage") {
+            let input = u.get("prompt_tokens").and_then(Value::as_i64).unwrap_or(0);
+            let output = u
+                .get("completion_tokens")
+                .and_then(Value::as_i64)
+                .unwrap_or(0);
+            if input > 0 {
+                self.usage_input_tokens = input;
+            }
+            if output > 0 {
+                self.usage_output_tokens = output;
+            }
+        }
+
         // Emit message_start if this is the first chunk with role
         if let Some(delta) = chunk
             .get("choices")
@@ -374,13 +402,6 @@ impl ClaudeSSETransformer {
         {
             if delta.get("role").is_some() && !self.started {
                 self.started = true;
-                // Capture input_tokens from the first chunk if present
-                if let Some(u) = chunk.get("usage") {
-                    let input = u.get("prompt_tokens").and_then(Value::as_i64).unwrap_or(0);
-                    if input > 0 {
-                        self.usage_input_tokens = input;
-                    }
-                }
                 events.push(
                     serde_json::to_string(&json!({
                         "type": "message_start",
@@ -403,23 +424,23 @@ impl ClaudeSSETransformer {
         }
 
         let Some(choice) = chunk.get("choices").and_then(|c| c.get(0)).cloned() else {
+            // usage-only 帧（choices=[]）。如果 message_delta 已经 emit 过
+            // 且 usage 已经更新，则补发一次 message_delta 让 Claude 客户端
+            // 拿到真实的 output_tokens（Claude 协议允许 message_delta 多次）。
+            if self.message_delta_emitted && self.usage_output_tokens > 0 {
+                events.push(
+                    serde_json::to_string(&json!({
+                        "type": "message_delta",
+                        "delta": {},
+                        "usage": {
+                            "output_tokens": self.usage_output_tokens
+                        }
+                    }))
+                    .unwrap_or_default(),
+                );
+            }
             return events;
         };
-
-        // Capture usage from the chunk if present (OpenAI stream_options.include_usage)
-        if let Some(u) = chunk.get("usage") {
-            let input = u.get("prompt_tokens").and_then(Value::as_i64).unwrap_or(0);
-            let output = u
-                .get("completion_tokens")
-                .and_then(Value::as_i64)
-                .unwrap_or(0);
-            if input > 0 {
-                self.usage_input_tokens = input;
-            }
-            if output > 0 {
-                self.usage_output_tokens = output;
-            }
-        }
 
         let delta = choice.get("delta").cloned().unwrap_or(json!({}));
         let finish_reason = choice.get("finish_reason").and_then(|fr| fr.as_str());
@@ -594,6 +615,7 @@ impl ClaudeSSETransformer {
                 }))
                 .unwrap_or_default(),
             );
+            self.message_delta_emitted = true;
 
             events.push(
                 serde_json::to_string(&json!({
