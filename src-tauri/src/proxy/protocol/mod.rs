@@ -283,7 +283,18 @@ mod tests {
         a.transform_request(&mut body, "claude-3-opus");
 
         assert_eq!(body["model"], "claude-3-opus");
-        assert_eq!(body["system"], "You are helpful.");
+        // system 可以是字符串或 content block array（官方文档允许两种形态）
+        // 当前实现用 array（Claude 4.5+ 兼容），验证语义等价即可
+        let system_text = match &body["system"] {
+            Value::String(s) => s.clone(),
+            Value::Array(arr) => arr
+                .iter()
+                .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+                .collect::<Vec<_>>()
+                .join(""),
+            _ => panic!("system 字段既不是 string 也不是 array"),
+        };
+        assert_eq!(system_text, "You are helpful.");
         assert_eq!(body["messages"].as_array().unwrap().len(), 1);
         assert_eq!(body["messages"][0]["role"], "user");
         assert_eq!(body["max_tokens"], 1024);
