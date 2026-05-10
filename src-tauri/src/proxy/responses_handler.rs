@@ -494,33 +494,11 @@ fn sse_done() -> Bytes {
 }
 
 fn append_utf8_safe(buffer: &mut String, remainder: &mut Vec<u8>, bytes: &[u8]) {
-    remainder.extend_from_slice(bytes);
-
-    match std::str::from_utf8(remainder) {
-        Ok(valid) => {
-            buffer.push_str(valid);
-            remainder.clear();
-        }
-        Err(err) => {
-            let valid_up_to = err.valid_up_to();
-            if valid_up_to > 0 {
-                let valid = std::str::from_utf8(&remainder[..valid_up_to])
-                    .expect("valid UTF-8 prefix from valid_up_to");
-                buffer.push_str(valid);
-                remainder.drain(..valid_up_to);
-            }
-
-            if err.error_len().is_some() && !remainder.is_empty() {
-                buffer.push_str(&String::from_utf8_lossy(remainder));
-                remainder.clear();
-            }
-        }
-    }
+    super::sse::append_utf8_safe(buffer, remainder, bytes)
 }
 
 fn sse_data_payload(line: &str) -> Option<&str> {
-    let payload = line.strip_prefix("data:")?;
-    Some(payload.strip_prefix(' ').unwrap_or(payload))
+    super::sse::sse_data_payload(line)
 }
 
 // ─── Handler ─────────────────────────────────────────────────────────

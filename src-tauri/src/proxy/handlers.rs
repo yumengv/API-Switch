@@ -177,10 +177,11 @@ pub async fn handle_messages(
         let message_id = format!("msg_{}", chrono::Utc::now().timestamp());
         let transformer = ClaudeSSETransformer::new(message_id, requested_model.clone());
         let sse_buffer = String::new();
+        let sse_utf8_remainder: Vec<u8> = Vec::new();
 
         let transformed_stream = futures::stream::unfold(
-            (upstream_stream, transformer, sse_buffer),
-            |(mut stream, mut transformer, mut sse_buffer)| async move {
+            (upstream_stream, transformer, sse_buffer, sse_utf8_remainder),
+            |(mut stream, mut transformer, mut sse_buffer, mut sse_utf8_remainder)| async move {
                 loop {
                     // Process any buffered SSE lines first
                     if let Some(line_end) = sse_buffer.find('\n') {
@@ -197,7 +198,7 @@ pub async fn handle_messages(
                                 let output = Bytes::from("data: [DONE]\n\n");
                                 return Some((
                                     Ok::<_, std::io::Error>(output),
-                                    (stream, transformer, sse_buffer),
+                                    (stream, transformer, sse_buffer, sse_utf8_remainder),
                                 ));
                             }
 
@@ -210,7 +211,7 @@ pub async fn handle_messages(
                                 }
                                 return Some((
                                     Ok(Bytes::from(output)),
-                                    (stream, transformer, sse_buffer),
+                                    (stream, transformer, sse_buffer, sse_utf8_remainder),
                                 ));
                             }
                         }
@@ -220,7 +221,7 @@ pub async fn handle_messages(
                     // Need more data from upstream
                     match stream.next().await {
                         Some(Ok(chunk)) => {
-                            sse_buffer.push_str(&String::from_utf8_lossy(&chunk));
+                            super::sse::append_utf8_safe(&mut sse_buffer, &mut sse_utf8_remainder, &chunk);
                             // Continue loop to process buffered data
                         }
                         Some(Err(e)) => {
@@ -229,7 +230,7 @@ pub async fn handle_messages(
                                     std::io::ErrorKind::Other,
                                     format!("Stream read error: {e}"),
                                 )),
-                                (stream, transformer, sse_buffer),
+                                (stream, transformer, sse_buffer, sse_utf8_remainder),
                             ));
                         }
                         None => {
