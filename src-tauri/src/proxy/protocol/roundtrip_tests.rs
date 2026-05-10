@@ -425,3 +425,236 @@ mod helpers {
         assert_eq!(filtered, json!({"a": 1, "c": 3}));
     }
 }
+
+
+// ═══════════════════════════════════════════════════════════════════
+//  Gemini 协议 round-trip 测试
+//
+//  注意：Gemini 上游 adapter 使用 OpenAI 兼容端点（v1beta/openai/），
+//  所以上游方向几乎是直通。这里的 round-trip 主要验证下游方向：
+//  Gemini 客户端 → OpenAI 中间 → 还原 Gemini。
+// ═══════════════════════════════════════════════════════════════════
+
+mod gemini_roundtrip {
+    use super::*;
+    use crate::proxy::protocol::{
+        gemini_to_openai_request, openai_to_gemini_response,
+    };
+
+    /// 基础文本请求 round-trip
+    #[test]
+    fn request_basic_text() {
+        let gemini_original = json!({
+            "model": "gemini-1.5-pro",
+            "contents": [
+                {"role": "user", "parts": [{"text": "Hello"}]}
+            ],
+            "generationConfig": {
+                "temperature": 0.7,
+                "maxOutputTokens": 512
+            }
+        });
+
+        let openai_intermediate = gemini_to_openai_request(&gemini_original);
+
+        // 验证降维到 OpenAI 格式
+        assert_eq!(openai_intermediate["model"], "gemini-1.5-pro");
+        assert_eq!(openai_intermediate["messages"][0]["role"], "user");
+        assert_eq!(openai_intermediate["messages"][0]["content"], "Hello");
+        assert_eq!(openai_intermediate["temperature"], 0.7);
+        assert_eq!(openai_intermediate["max_tokens"], 512);
+    }
+
+    /// 响应方向基础 round-trip
+    #[test]
+    fn response_basic_text() {
+        let openai = json!({
+            "id": "chatcmpl-abc",
+            "object": "chat.completion",
+            "model": "gemini-1.5-pro",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "Hi there"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5}
+        });
+
+        let gemini = openai_to_gemini_response(&openai);
+
+        assert_eq!(gemini["candidates"][0]["content"]["role"], "model");
+        assert_eq!(gemini["candidates"][0]["content"]["parts"][0]["text"], "Hi there");
+        assert_eq!(gemini["candidates"][0]["finishReason"], "STOP");
+        assert_eq!(gemini["usageMetadata"]["promptTokenCount"], 10);
+        assert_eq!(gemini["usageMetadata"]["candidatesTokenCount"], 5);
+    }
+
+    /// **公理二**：请求方向未知字段穿透
+    /// Gemini `safetySettings`、`cachedContent` 等字段在 OpenAI 里没有对应，
+    /// 必须穿透保留。
+    #[test]
+    fn request_unknown_field_passthrough() {
+        let gemini_original = json!({
+            "model": "gemini-1.5-pro",
+            "contents": [{"role": "user", "parts": [{"text": "Hi"}]}],
+            "safetySettings": [
+                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_ONLY_HIGH"}
+            ],
+            "x_future_gemini_field": "preserve_me"
+        });
+
+        let openai_intermediate = gemini_to_openai_request(&gemini_original);
+
+        assert!(
+            openai_intermediate.get("safetySettings").is_some(),
+            "gemini_to_openai 丢失了官方字段 safetySettings（阶段2 修）"
+        );
+        assert!(
+            openai_intermediate.get("x_future_gemini_field").is_some(),
+            "gemini_to_openai 丢失了自定义字段 x_future_gemini_field（阶段2 修）"
+        );
+    }
+
+    /// **公理二**：响应方向未知字段穿透
+    #[test]
+    fn response_unknown_field_passthrough() {
+        let openai = json!({
+            "id": "chatcmpl-xyz",
+            "model": "gemini-1.5-pro",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "Reply"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 3},
+            "x_openai_future_field": "preserve_me",
+            "system_fingerprint": "fp_abc123"
+        });
+
+        let gemini = openai_to_gemini_response(&openai);
+
+        assert!(
+            gemini.get("x_openai_future_field").is_some(),
+            "openai_to_gemini_response 丢失未知字段 x_openai_future_field（阶段2 修）"
+        );
+        assert!(
+            gemini.get("system_fingerprint").is_some(),
+            "openai_to_gemini_response 丢失 system_fingerprint（阶段2 修）"
+        );
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  Azure 协议 round-trip 测试
+//
+//  Azure OpenAI 本质就是 OpenAI 协议 + 不同 URL + 不同鉴权，
+//  body 几乎直通。这里主要验证 body 最小变换的正确性和字段穿透。
+// ═══════════════════════════════════════════════════════════════════
+
+mod azure_roundtrip {
+    use super::*;
+    use crate::proxy::protocol::{azure::AzureAdapter, azure_to_openai_request, ProtocolAdapter};
+
+    const TEST_DEPLOYMENT: &str = "gpt-4o-deployment";
+
+    /// 基础请求 round-trip
+    #[test]
+    fn request_basic_roundtrip() {
+        let azure_original = json!({
+            "messages": [{"role": "user", "content": "Hi"}],
+            "max_tokens": 100,
+            "temperature": 0.7
+        });
+
+        let openai_intermediate = azure_to_openai_request(&azure_original, TEST_DEPLOYMENT);
+        assert_eq!(openai_intermediate["model"], TEST_DEPLOYMENT);
+        assert_eq!(openai_intermediate["messages"][0]["content"], "Hi");
+
+        // 上游方向：AzureAdapter 移除 model 字段
+        let mut back_to_azure = openai_intermediate.clone();
+        let adapter = AzureAdapter;
+        adapter.transform_request(&mut back_to_azure, TEST_DEPLOYMENT);
+
+        // Azure 上游不要 body 里的 model（放在 URL 里）
+        assert!(back_to_azure.get("model").is_none());
+        assert_eq!(back_to_azure["messages"][0]["content"], "Hi");
+    }
+
+    /// **公理二**：请求方向未知字段穿透
+    #[test]
+    fn request_unknown_field_passthrough() {
+        let azure_original = json!({
+            "messages": [{"role": "user", "content": "Hi"}],
+            "max_tokens": 100,
+            "x_azure_custom_header": "track-123",
+            "dataSources": [{"type": "AzureCognitiveSearch", "parameters": {}}]
+        });
+
+        let openai_intermediate = azure_to_openai_request(&azure_original, TEST_DEPLOYMENT);
+
+        assert!(
+            openai_intermediate.get("x_azure_custom_header").is_some(),
+            "azure_to_openai_request 应该保留自定义字段"
+        );
+        assert!(
+            openai_intermediate.get("dataSources").is_some(),
+            "azure_to_openai_request 应该保留 Azure 专有字段 dataSources"
+        );
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  OpenAI / Custom：基准协议，无翻译需求
+//
+//  OpenAI 和 Custom 作为基准协议不做翻译，只验证 adapter 的核心行为
+//  （transform_request 设置正确的 model、URL 拼接等）不会破坏 body。
+// ═══════════════════════════════════════════════════════════════════
+
+mod openai_roundtrip {
+    use super::*;
+    use crate::proxy::protocol::ProtocolAdapter;
+
+    /// OpenAI adapter 的 transform_request 只应修改 model 字段，其他保持原样
+    #[test]
+    fn openai_adapter_preserves_body() {
+        // 通过 factory 构造（保持测试独立于 openai 模块的 public API）
+        let adapter = crate::proxy::protocol::get_adapter("openai");
+        let mut body = json!({
+            "model": "auto",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "temperature": 0.5,
+            "x_custom": "preserve_me"
+        });
+        let original_messages = body["messages"].clone();
+        let original_custom = body["x_custom"].clone();
+
+        adapter.transform_request(&mut body, "gpt-4o");
+
+        assert_eq!(body["model"], "gpt-4o");
+        assert_eq!(body["messages"], original_messages);
+        assert_eq!(body["temperature"], 0.5);
+        assert_eq!(
+            body["x_custom"], original_custom,
+            "OpenAI adapter 不应丢弃自定义字段"
+        );
+    }
+
+    /// Custom adapter 同上：只改 model
+    #[test]
+    fn custom_adapter_preserves_body() {
+        let adapter = crate::proxy::protocol::get_adapter("custom");
+        let mut body = json!({
+            "model": "auto",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "x_deepseek_specific": "value"
+        });
+
+        adapter.transform_request(&mut body, "deepseek-chat");
+
+        assert_eq!(body["model"], "deepseek-chat");
+        assert_eq!(
+            body["x_deepseek_specific"], "value",
+            "Custom adapter 应保留所有非 model 字段"
+        );
+    }
+}
