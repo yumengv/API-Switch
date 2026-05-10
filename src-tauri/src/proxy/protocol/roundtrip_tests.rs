@@ -658,3 +658,118 @@ mod openai_roundtrip {
         );
     }
 }
+
+
+// ═══════════════════════════════════════════════════════════════════
+//  Responses 协议 round-trip 测试
+//
+//  当前状态：
+//    ✅ 下游方向（客户端发 Responses → OpenAI 中间）：responses_handler.rs 内做了
+//    ❌ 上游方向（OpenAI 中间 → Responses 上游）：未实现，阶段 3 补齐
+//
+//  下游方向的测试验证请求字段映射、tools 转换、未知字段穿透。
+//  上游方向的测试先写好断言，阶段 3 实现后全部变绿。
+//
+//  因为 responses_handler.rs 里的函数目前是 private 的，
+//  这里的测试只覆盖通过 adapter trait 可访问的路径，以及对公开行为的 JSON-level 验证。
+//  更深度的单元测试在阶段 3 整合进 protocol/responses.rs 时一并补齐。
+// ═══════════════════════════════════════════════════════════════════
+
+mod responses_roundtrip {
+    use super::*;
+
+    /// **阶段 3 实施前占位**：Responses 上游 adapter 还未实现。
+    /// 实现后这条测试应该通过——通过 `get_adapter("responses")` 能拿到
+    /// 一个真正做翻译的 adapter（而不是 fallback 到 OpenAI）。
+    #[test]
+    #[ignore] // 阶段 3 实施后移除 #[ignore]
+    fn adapter_registered_for_responses() {
+        let adapter = crate::proxy::protocol::get_adapter("responses");
+        // 阶段 3 后，ResponsesAdapter.build_chat_url 应生成 /v1/responses
+        let url = adapter.build_chat_url("https://api.openai.com", "gpt-4o");
+        assert!(
+            url.ends_with("/v1/responses"),
+            "Responses adapter 的 chat URL 应指向 /v1/responses, 实际: {url}"
+        );
+    }
+
+    /// **阶段 3 占位**：上游 adapter 应能把 OpenAI chat.completions 请求
+    /// 翻译成 Responses 请求。
+    #[test]
+    #[ignore] // 阶段 3 实施后移除 #[ignore]
+    fn request_openai_to_responses_upstream() {
+        let adapter = crate::proxy::protocol::get_adapter("responses");
+        let mut body = json!({
+            "model": "gpt-4o",
+            "messages": [
+                {"role": "system", "content": "Be brief."},
+                {"role": "user", "content": "Hi"}
+            ],
+            "temperature": 0.7,
+            "stream": false
+        });
+        adapter.transform_request(&mut body, "gpt-4o");
+
+        // Responses 格式：input 取代 messages，instructions 取代 system
+        assert!(
+            body.get("input").is_some(),
+            "transform_request 应生成 input 字段"
+        );
+        assert_eq!(
+            body["instructions"], "Be brief.",
+            "system message 应映射到 instructions"
+        );
+    }
+
+    /// **阶段 3 占位**：响应方向 Responses → OpenAI
+    #[test]
+    #[ignore] // 阶段 3 实施后移除 #[ignore]
+    fn response_responses_to_openai_upstream() {
+        let adapter = crate::proxy::protocol::get_adapter("responses");
+        let mut body = json!({
+            "id": "resp_abc",
+            "object": "response",
+            "status": "completed",
+            "model": "gpt-4o",
+            "output": [{
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "Hello"}]
+            }],
+            "usage": {
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "total_tokens": 15
+            }
+        });
+        adapter.transform_response(&mut body);
+
+        assert_eq!(body["object"], "chat.completion");
+        assert_eq!(body["choices"][0]["message"]["content"], "Hello");
+        assert_eq!(body["usage"]["prompt_tokens"], 10);
+        assert_eq!(body["usage"]["completion_tokens"], 5);
+    }
+
+    /// **公理二占位**：Responses 上游方向的未知字段穿透
+    #[test]
+    #[ignore] // 阶段 3 实施后移除 #[ignore]
+    fn upstream_unknown_field_passthrough() {
+        let adapter = crate::proxy::protocol::get_adapter("responses");
+        let mut body = json!({
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "x_future_field": "preserve_me",
+            "some_openai_extension": {"nested": true}
+        });
+        adapter.transform_request(&mut body, "gpt-4o");
+
+        assert!(
+            body.get("x_future_field").is_some(),
+            "ResponsesAdapter.transform_request 应保留未知字段"
+        );
+        assert!(
+            body.get("some_openai_extension").is_some(),
+            "ResponsesAdapter.transform_request 应保留嵌套未知字段"
+        );
+    }
+}
