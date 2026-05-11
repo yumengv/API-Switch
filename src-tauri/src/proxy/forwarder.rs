@@ -52,10 +52,13 @@ impl StreamEndReason {
 fn is_completed_stream_success(
     status_code: i32,
     has_sse_error: bool,
-    chunk_count: i64,
-    streamed_bytes: i64,
+    has_text_delta: bool,
+    has_tool_calls: bool,
+    completion_tokens: i64,
 ) -> bool {
-    status_code == 200 && !has_sse_error && chunk_count > 0 && streamed_bytes > 0
+    // 仅在 HTTP 200、无 SSE 错误且存在有效输出时判定成功。
+    // 有效输出定义为：出现文本 delta、出现工具调用、或返回的 completion_tokens>0。
+    status_code == 200 && !has_sse_error && (has_text_delta || has_tool_calls || completion_tokens > 0)
 }
 
 /// 判断客户端断开的流是否算成功。
@@ -168,7 +171,14 @@ fn build_stream_diagnostic(
     buffered_sse_bytes: usize,
     first_token_ms: i64,
     elapsed_ms: i64,
+    prompt_tokens: i64,
+    completion_tokens: i64,
+    has_text_delta: bool,
+    has_tool_calls: bool,
+    has_sse_error: bool,
+    stream_success: Option<bool>,
 ) -> String {
+    let has_valid_output = has_text_delta || has_tool_calls || completion_tokens > 0;
     let detail = serde_json::json!({
         "stage": stage,
         "channel": entry.channel_name.clone().unwrap_or_else(|| "unknown".to_string()),
@@ -181,6 +191,13 @@ fn build_stream_diagnostic(
         "chunk_count": chunk_count,
         "streamed_bytes": streamed_bytes,
         "buffered_sse_bytes": buffered_sse_bytes,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "has_text_delta": has_text_delta,
+        "has_tool_calls": has_tool_calls,
+        "has_sse_error": has_sse_error,
+        "has_valid_output": has_valid_output,
+        "stream_success": stream_success,
         "content_type": response_header_value(headers, "content-type"),
         "content_encoding": response_header_value(headers, "content-encoding"),
         "transfer_encoding": response_header_value(headers, "transfer-encoding"),
@@ -312,6 +329,12 @@ impl Drop for StreamLogGuard {
                 0, // sse_buffer not available in drop context
                 first_token_ms,
                 latency_ms,
+                prompt_tokens,
+                completion_tokens,
+                false,
+                false,
+                false,
+                Some(success),
             );
             let db = self.db.clone();
             let app_handle = self.app_handle.clone();
@@ -926,6 +949,11 @@ fn build_streaming_response(
                         let byte_total = streamed_bytes.load(Ordering::SeqCst);
                         let ft = first_token_ms.load(Ordering::SeqCst);
                         let lat = start.elapsed().as_millis() as i64;
+                        let pt = prompt_tokens.load(Ordering::SeqCst);
+                        let ct = completion_tokens.load(Ordering::SeqCst);
+                        let has_text_output = has_text_delta.load(Ordering::SeqCst);
+                        let has_tool_output = has_tool_calls.load(Ordering::SeqCst);
+                        let has_error = has_sse_error.load(Ordering::SeqCst);
                         let diagnostic = build_stream_diagnostic(
                             "stream_read",
                             Some(&err),
@@ -938,6 +966,12 @@ fn build_streaming_response(
                             sse_buffer.len(),
                             ft,
                             lat,
+                            pt,
+                            ct,
+                            has_text_output,
+                            has_tool_output,
+                            has_error,
+                            Some(false),
                         );
                         let error_message = format!("Stream error: {err}\n{diagnostic}");
                         let attempt_path = attempt_path_with_current(
@@ -952,8 +986,6 @@ fn build_streaming_response(
                         let ak2 = access_key.clone();
                         let e2 = entry.clone();
                         let rm2 = requested_model.clone();
-                        let pt = prompt_tokens.load(Ordering::SeqCst);
-                        let ct = completion_tokens.load(Ordering::SeqCst);
                         tokio::spawn(async move {
                             log_usage(
                                 &db2,
@@ -996,14 +1028,28 @@ fn build_streaming_response(
                         let byte_total = streamed_bytes.load(Ordering::SeqCst);
                         let ft = first_token_ms.load(Ordering::SeqCst);
                         let sc = status_code;
-                        let success =
-                            is_completed_stream_success(sc, has_error, chunk_total, byte_total);
+                        let has_text_output = has_text_delta.load(Ordering::SeqCst);
+                        let has_tool_output = has_tool_calls.load(Ordering::SeqCst);
+                        let success = is_completed_stream_success(
+                            sc,
+                            has_error,
+                            has_text_output,
+                            has_tool_output,
+                            ct,
+                        );
+                        let failure_reason = if success {
+                            None
+                        } else if has_error {
+                            Some("upstream stream completed with SSE error".to_string())
+                        } else {
+                            Some("upstream stream completed without valid output".to_string())
+                        };
                         let attempt_path = attempt_path_with_current(
                             &prior_attempts,
                             &entry,
                             status_code,
                             success,
-                            None,
+                            failure_reason.clone(),
                         );
                         let stream_summary = build_stream_diagnostic(
                             "stream_complete",
@@ -1017,7 +1063,17 @@ fn build_streaming_response(
                             sse_buffer.len(),
                             ft,
                             start.elapsed().as_millis() as i64,
+                            pt,
+                            ct,
+                            has_text_output,
+                            has_tool_output,
+                            has_error,
+                            Some(success),
                         );
+                        let log_message = failure_reason
+                            .as_ref()
+                            .map(|reason| format!("{reason}\n{stream_summary}"))
+                            .unwrap_or(stream_summary);
                         let db2 = db.clone();
                         let ah2 = app_handle.clone();
                         let ak2 = access_key.clone();
@@ -1045,7 +1101,7 @@ fn build_streaming_response(
                                 lat,
                                 sc,
                                 success,
-                                Some(stream_summary.as_str()),
+                                Some(log_message.as_str()),
                                 Some(attempt_path.as_str()),
                                 Some(StreamEndReason::Done),
                             );
@@ -1055,6 +1111,12 @@ fn build_streaming_response(
                                 spawn_cool_down_entry(scb, sfc, sdb, db2.clone(), eah, eid);
                             }
                         });
+                        if let Some(reason) = failure_reason {
+                            return Poll::Ready(Some(Err(std::io::Error::new(
+                                std::io::ErrorKind::Other,
+                                reason,
+                            ))));
+                        }
                     }
                     Poll::Ready(None)
                 }
@@ -1834,11 +1896,51 @@ data: [DONE]\n",
     }
 
     #[test]
-    fn completed_stream_success_rejects_empty_or_error_streams() {
-        assert!(!is_completed_stream_success(200, false, 0, 128));
-        assert!(!is_completed_stream_success(200, false, 1, 0));
-        assert!(!is_completed_stream_success(200, true, 1, 128));
-        assert!(!is_completed_stream_success(502, false, 1, 128));
+    fn completed_stream_success_logic() {
+        assert!(!is_completed_stream_success(200, false, false, false, 0));
+        assert!(is_completed_stream_success(200, false, true, false, 0));
+        assert!(is_completed_stream_success(200, false, false, true, 0));
+        assert!(is_completed_stream_success(200, false, false, false, 5));
+        assert!(!is_completed_stream_success(200, true, true, false, 5));
+        assert!(!is_completed_stream_success(502, false, true, false, 5));
+    }
+
+    #[test]
+    fn append_and_parse_sse_empty_done_has_no_valid_output() {
+        let mut buffer = String::new();
+        let chunk = Bytes::from_static(b"data: [DONE]\n");
+        let prompt_tokens = Arc::new(AtomicI64::new(0));
+        let completion_tokens = Arc::new(AtomicI64::new(0));
+        let has_sse_error = Arc::new(AtomicBool::new(false));
+        let has_text_delta = Arc::new(AtomicBool::new(false));
+        let has_tool_calls = Arc::new(AtomicBool::new(false));
+        let mut done_state = SseDoneState::default();
+        let mut remainder = Vec::new();
+
+        let output = append_and_parse_sse(
+            &mut buffer,
+            &mut remainder,
+            &chunk,
+            &prompt_tokens,
+            &completion_tokens,
+            &has_sse_error,
+            &has_text_delta,
+            &has_tool_calls,
+            Some("gpt-test"),
+            &mut done_state,
+        );
+
+        assert!(output.is_none());
+        assert!(!has_text_delta.load(Ordering::Relaxed));
+        assert!(!has_tool_calls.load(Ordering::Relaxed));
+        assert_eq!(completion_tokens.load(Ordering::Relaxed), 0);
+        assert!(!is_completed_stream_success(
+            200,
+            has_sse_error.load(Ordering::Relaxed),
+            has_text_delta.load(Ordering::Relaxed),
+            has_tool_calls.load(Ordering::Relaxed),
+            completion_tokens.load(Ordering::Relaxed),
+        ));
     }
 
     #[test]
