@@ -23,7 +23,7 @@ dist-ssr
 *.sln
 *.sw?
 
-# Personal planning notes
+# Personal planning & dev notes
 GENERIC_AGENT_FLOATING_AGENT_PLAN.md
 GENERIC_AGENT_IFRAME_PLAN.md
 GENERIC_AGENT_PRODUCT_DISCUSSION.md
@@ -32,7 +32,13 @@ PLAN.md
 RELEASE_NOTES_v0.3_v0.4.1.md
 RELEASE_NOTES_v0.4.1_v0.5.0.md
 FLOW.md
+REFACTOR_PLAN.md
+BUG.MD
+log.md
+pool-for-group-test.md
 docs/
+cli.json
+src-tauri/src/services/learnings_translation.md
 
 # Rust / Tauri
 src-tauri/target
@@ -40,7 +46,9 @@ src-tauri/target
 # Build artifacts
 tsconfig.tsbuildinfo
 release/
+release-artifacts/
 dist-web-admin/
+src-tauri/.build-counter
 
 # Test artifacts
 .playwright-mcp/
@@ -63,11 +71,16 @@ design/
 /icon5.png
 /star.jpg
 /logo/
+/ui-*.png
 四款程序ICON设计方案*
+doubao-color(*).svg
+xiaomi-*(*).svg
+zhipu-color(*).svg
 
 # Temp / tool dirs
 tmp/
 .claude/
+.sisyphus/
 
 # Other agents' build artifacts
 src-tauri/target-codex*/
