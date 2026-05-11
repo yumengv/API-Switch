@@ -31,6 +31,8 @@ _internal_stream_core_review.md
 PLAN.md
 RELEASE_NOTES_v0.3_v0.4.1.md
 RELEASE_NOTES_v0.4.1_v0.5.0.md
+FLOW.md
+docs/
 
 # Rust / Tauri
 src-tauri/target
