@@ -6,7 +6,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Toaster } from 'sonner';
 import { cn } from '@/lib/utils';
-import type { AppSettings, ProxyStatus } from '@/types';
+import type { AdminStatus, AppSettings, ProxyStatus } from '@/types';
 
 export type MainPage = 'apiPool' | 'channels' | 'tokens' | 'logs' | 'dashboard' | 'translator' | 'settings' | 'guide';
 
@@ -16,15 +16,15 @@ const NAV_ITEMS: { key: MainPage; icon: typeof Layers; labelKey: string; externa
   { key: 'tokens', icon: KeyRound, labelKey: 'nav.tokens' },
   { key: 'logs', icon: FileText, labelKey: 'nav.logs' },
   { key: 'dashboard', icon: BarChart3, labelKey: 'nav.dashboard' },
-  { key: 'settings', icon: Settings, labelKey: 'nav.settings' },
-  { key: 'guide', icon: BookOpen, labelKey: 'nav.guide', externalLang: { zh: 'GUIDE_CN.md', en: 'GUIDE.md' } },
-];
+    { key: 'settings', icon: Settings, labelKey: 'nav.settings' },
+  ];
 
 const starImageSrc = `${import.meta.env.BASE_URL}star.jpg`;
 
 export interface MainShellProps {
   currentPage: MainPage;
   proxyStatus?: ProxyStatus | null;
+  adminStatus?: AdminStatus | null;
   settings?: AppSettings | null;
   updateInfo?: { current: string; latest: string; url: string } | null;
   onUpdateDismiss?: () => void;
@@ -39,6 +39,8 @@ export interface MainShellProps {
 export function MainShell({
   currentPage,
   proxyStatus,
+  adminStatus,
+  settings,
   updateInfo,
   onUpdateDismiss,
   onUpdateOpen,
@@ -81,7 +83,7 @@ export function MainShell({
 
           <ScrollArea className="flex-1 px-2 py-2">
             <nav className="flex flex-col gap-1">
-              {NAV_ITEMS.map(({ key, icon: Icon, labelKey, externalLang }) => (
+              {NAV_ITEMS.map(({ key, icon: Icon, labelKey }) => (
                 <Button
                   key={key}
                   variant={currentPage === key ? 'secondary' : 'ghost'}
@@ -89,33 +91,47 @@ export function MainShell({
                     'justify-start gap-2 px-3',
                     currentPage === key && 'bg-sidebar-accent text-sidebar-accent-foreground',
                   )}
-                  onClick={() => {
-                    if (externalLang) {
-                      const lang = i18n.language.startsWith('zh') ? 'zh' : 'en';
-                      onOpenGuide?.(externalLang[lang]);
-                    } else {
-                      onNavigate(key);
-                    }
-                  }}
+                  onClick={() => onNavigate(key)}
                 >
                   <Icon className="h-4 w-4" />
                   {t(labelKey)}
                 </Button>
               ))}
+              <Separator className="my-1" />
+              <Button
+                variant="ghost"
+                className="w-full justify-start gap-2 px-3"
+                onClick={() => {
+                  const lang = i18n.language.startsWith('zh') ? 'zh' : 'en';
+                  const guidePath = lang === 'zh' ? 'GUIDE_CN.md' : 'GUIDE.md';
+                  onOpenGuide?.(guidePath);
+                }}
+              >
+                <BookOpen className="h-4 w-4" />
+                {t('nav.guide', '使用指南')}
+              </Button>
+              {onLogout && (
+                <>
+                  <Separator className="my-1" />
+                  <Button variant="ghost" className="w-full justify-start gap-2 px-3 text-red-500 hover:text-red-500" onClick={onLogout}>
+                    <LogOut className="h-4 w-4" />
+                    {t('nav.logout', '退出登录')}
+                  </Button>
+                </>
+              )}
             </nav>
           </ScrollArea>
 
-          <div className="space-y-3 px-2 pb-4">
-            {onLogout && (
-              <Button variant="ghost" className="w-full justify-start gap-2 px-3" onClick={onLogout}>
-                <LogOut className="h-4 w-4" />
-                退出登录
-              </Button>
-            )}
+          <div className="px-2 pb-4">
             <div className="flex justify-center">
               <a href="https://github.com/wang1970/API-Switch" target="_blank" rel="noopener noreferrer">
                 <img src={starImageSrc} alt="Star on GitHub" className="cursor-pointer transition-opacity hover:opacity-80" />
               </a>
+            </div>
+            <div className="mt-2 flex items-center justify-center gap-2 text-xs text-muted-foreground">
+              <span className={cn('inline-block h-4 w-4 rounded-full', proxyStatus?.running ? 'bg-green-500' : 'bg-red-500')} />
+              <span className={cn('inline-block h-4 w-4 rounded-full', adminStatus?.running ? 'bg-green-500' : 'bg-red-500')} />
+              <span>版本号：{settings?.app_version || '0.0.0'}</span>
             </div>
           </div>
         </aside>

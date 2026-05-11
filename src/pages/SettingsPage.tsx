@@ -32,6 +32,7 @@ export function SettingsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["settings"] });
       queryClient.invalidateQueries({ queryKey: ["pool-groups"] });
+      queryClient.invalidateQueries({ queryKey: ["adminStatus"] });
     },
   });
 
@@ -56,9 +57,10 @@ export function SettingsPage() {
       } else {
         await adapter.proxy.stop();
       }
-      queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
-      queryClient.invalidateQueries({ queryKey: ["settings"] });
-    } catch (err) {
+        queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
+        queryClient.invalidateQueries({ queryKey: ["adminStatus"] });
+        queryClient.invalidateQueries({ queryKey: ["settings"] });
+      } catch (err) {
       const action = enabled ? t("settings.proxy.start") : t("settings.proxy.stop");
       toast.error(`${action} ${t("common.failed")}: ${err}`, { duration: Infinity });
     }

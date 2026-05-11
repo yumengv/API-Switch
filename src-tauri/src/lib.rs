@@ -210,6 +210,7 @@ pub fn run() {
         commands::channel::fetch_models,
         commands::channel::fetch_models_direct,
         commands::channel::probe_url,
+        commands::channel::test_channel,
         commands::channel::select_models,
         commands::pool::list_entries,
         commands::pool::toggle_entry,

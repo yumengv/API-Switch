@@ -234,6 +234,7 @@ export interface AppSettings {
   web_admin_username: string;
   web_admin_password: string;
   web_admin_port: number;
+  app_version: string;
 }
 
 export interface VersionedAppSettings extends AppSettings {
@@ -262,6 +263,7 @@ export const DEFAULT_SETTINGS: VersionedAppSettings = {
   web_admin_username: "admin",
   web_admin_password: "admin",
   web_admin_port: 9099,
+  app_version: "0.6.2",
   _version: 0,
 };
 

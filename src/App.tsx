@@ -41,6 +41,12 @@ function MainApp({ onLogout }: { onLogout?: () => void }) {
     refetchInterval: 2000,
   });
 
+  const { data: adminStatus } = useQuery({
+    queryKey: ["adminStatus"],
+    queryFn: () => api.getAdminStatus(),
+    refetchInterval: 2000,
+  });
+
   const [guideOpen, setGuideOpen] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<{ current: string; latest: string; url: string } | null>(null);
 
@@ -94,6 +100,7 @@ function MainApp({ onLogout }: { onLogout?: () => void }) {
     <MainShell
       currentPage={currentPage}
       proxyStatus={proxyStatus}
+      adminStatus={adminStatus}
       settings={settings}
       updateInfo={updateInfo}
       onUpdateDismiss={() => setUpdateInfo(null)}

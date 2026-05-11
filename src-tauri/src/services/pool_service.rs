@@ -128,10 +128,12 @@ pub async fn test_entry_latency(
         .clone();
 
     let channel = db.get_channel(&entry.channel_id)?;
-    if !entry.enabled || !channel.enabled {
+    if !channel.enabled {
+        let _ = db.update_entry_response_ms(entry_id, "X");
+        let _ = db.toggle_entry(entry_id, false);
         return Ok(TestLatencyResult {
             status: "disabled".to_string(),
-            response_ms: entry.response_ms.unwrap_or_else(|| "X".to_string()),
+            response_ms: "X".to_string(),
         });
     }
 
@@ -140,7 +142,9 @@ pub async fn test_entry_latency(
 
     let mut upstream_body = json!({
         "model": entry.model,
-        "messages": [{"role": "user", "content": "hi"}],
+        "messages": [{"role": "user", "content": "请只回复 OK"}],
+        "max_tokens": 10,
+        "temperature": 0.0,
         "stream": false,
     });
     adapter.transform_request(&mut upstream_body, &entry.model);
@@ -160,6 +164,7 @@ pub async fn test_entry_latency(
         Ok(response) => response,
         Err(_) => {
             let _ = db.update_entry_response_ms(entry_id, "X");
+            let _ = db.toggle_entry(entry_id, false);
             return Ok(TestLatencyResult {
                 status: "failed".to_string(),
                 response_ms: "X".to_string(),
@@ -168,20 +173,41 @@ pub async fn test_entry_latency(
     };
 
     let latency_ms = start.elapsed().as_millis() as u64;
+    let status = response.status();
 
-    if !response.status().is_success() {
+    if status.as_u16() != 200 {
         let _ = db.update_entry_response_ms(entry_id, "X");
+        let _ = db.toggle_entry(entry_id, false);
         return Ok(TestLatencyResult {
             status: "failed".to_string(),
             response_ms: "X".to_string(),
         });
     }
 
-    // Consume body to ensure complete response
-    let _ = response.bytes().await;
+    let body = match response.text().await {
+        Ok(body) => body,
+        Err(_) => {
+            let _ = db.update_entry_response_ms(entry_id, "X");
+            let _ = db.toggle_entry(entry_id, false);
+            return Ok(TestLatencyResult {
+                status: "failed".to_string(),
+                response_ms: "X".to_string(),
+            });
+        }
+    };
+
+    if body.trim().is_empty() {
+        let _ = db.update_entry_response_ms(entry_id, "X");
+        let _ = db.toggle_entry(entry_id, false);
+        return Ok(TestLatencyResult {
+            status: "failed".to_string(),
+            response_ms: "X".to_string(),
+        });
+    }
 
     let response_ms = latency_ms.to_string();
     db.update_entry_response_ms(entry_id, &response_ms)?;
+    db.toggle_entry(entry_id, true)?;
 
     Ok(TestLatencyResult {
         status: "ok".to_string(),

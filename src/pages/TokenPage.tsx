@@ -15,6 +15,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { useApiAdapter } from "@/lib/useApiAdapter";
+import { toast } from "sonner";
 import type { AccessKey } from "@/types";
 
 export function TokenPage() {
@@ -36,20 +37,33 @@ export function TokenPage() {
     mutationFn: (name: string) => api.tokens.create(name),
     onSuccess: (key) => {
       queryClient.invalidateQueries({ queryKey: ["accessKeys"] });
+      setShowCreate(false);
       setCreatedKey(key);
       setNewKeyName("");
+    },
+    onError: (err) => {
+      toast.error(`${t("token.add")} ${t("common.failed")}: ${err}`);
     },
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.tokens.delete(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["accessKeys"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["accessKeys"] });
+      setDeleteTarget(null);
+    },
+    onError: (err) => {
+      toast.error(`${t("common.delete")} ${t("common.failed")}: ${err}`);
+    },
   });
 
   const toggleMutation = useMutation({
     mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
       api.tokens.toggle(id, enabled),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["accessKeys"] }),
+    onError: (err) => {
+      toast.error(`${t("common.toggle")} ${t("common.failed")}: ${err}`);
+    },
   });
 
   const copyKey = async (key: string, id: string) => {

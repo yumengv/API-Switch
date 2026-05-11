@@ -7,6 +7,7 @@ export interface ApiAdapter {
     fetchModels(channelId: string): Promise<FetchModelsResult>;
     fetchModelsDirect(apiType: string, baseUrl: string, apiKey: string, verified?: boolean): Promise<FetchModelsResult>;
     probeUrl(url: string): Promise<ProbeResult>;
+    testChannel(channelId: string): Promise<TestChannelResult>;
     selectModels(channelId: string, modelNames: string[], availableModels: ModelInfo[], catalogMeta?: ModelCatalogMetaUpdate[]): Promise<void>;
     updateResponseMs(channelId: string, responseMs: string): Promise<void>;
   };
@@ -51,8 +52,9 @@ settings: {
     translateAndRelay(request: TranslationRelayRequest): Promise<TranslationRelayPayload>;
   };
   getVersion(): Promise<{ version: string }>;
+  getAdminStatus(): Promise<AdminStatus>;
 }
 
 // Types referenced above – import from shared definitions
-import type { Channel, CreateChannelParams, UpdateChannelParams, FetchModelsResult, ProbeResult, ModelInfo, ModelCatalogMetaUpdate } from '../features/channels/types';
-import type { DashboardFilter, DashboardStats, ChartDataPoint, ModelRanking, UsageLog, UsageLogFilter, PaginatedResult, ApiEntry, AccessKey, AppSettings, ProxyStatus, TestChatResponse, TranslationRelayPayload, TranslationRelayRequest } from '../types';
+import type { Channel, CreateChannelParams, UpdateChannelParams, FetchModelsResult, ProbeResult, TestChannelResult, ModelInfo, ModelCatalogMetaUpdate } from '../features/channels/types';
+import type { DashboardFilter, DashboardStats, ChartDataPoint, ModelRanking, UsageLog, UsageLogFilter, PaginatedResult, ApiEntry, AccessKey, AppSettings, ProxyStatus, AdminStatus, TestChatResponse, TranslationRelayPayload, TranslationRelayRequest } from '../types';

@@ -1,5 +1,10 @@
-import { tauriApiAdapter } from './tauriApiAdapter';
-import { webAdminApiAdapter } from './webAdminApiAdapter';
+/**
+ * Platform-agnostic API adapter selector.
+ *
+ * Returns the single unified adapter that handles both desktop (Tauri invoke)
+ * and web (HTTP fetch) transparently at runtime.
+ */
+import { apiAdapter } from './unifiedApiAdapter';
 import type { ApiAdapter } from './apiAdapter';
 
 export function isTauriRuntime(): boolean {
@@ -16,5 +21,5 @@ export function isTauriRuntime(): boolean {
 }
 
 export function useApiAdapter(): ApiAdapter {
-  return isTauriRuntime() ? tauriApiAdapter : webAdminApiAdapter;
+  return apiAdapter;
 }

@@ -85,3 +85,10 @@ export interface ProbeResult {
   warning?: string;
   error?: ChannelOperationError;
 }
+
+export interface TestChannelResult {
+  success: boolean;
+  latency_ms: number;
+  status_code?: number;
+  message: string;
+}

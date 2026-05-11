@@ -11,7 +11,8 @@
     "cli": "连接 CLI",
     "settings": "系统设置",
     "guide": "使用指南",
-    "translator": "翻译"
+    "translator": "翻译",
+    "logout": "退出登录"
   },
   "apiPool": {
     "title": "API 管理",

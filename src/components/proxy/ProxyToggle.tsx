@@ -17,7 +17,10 @@ export function ProxyToggle() {
 
   const startMutation = useMutation({
     mutationFn: adapter.proxy.start,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["proxyStatus"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
+      queryClient.invalidateQueries({ queryKey: ["adminStatus"] });
+    },
     onError: (err) => {
       toast.error(`${t("settings.proxy.start")} ${t("common.failed")}: ${err}`, { duration: Infinity });
     },
@@ -25,7 +28,10 @@ export function ProxyToggle() {
 
   const stopMutation = useMutation({
     mutationFn: adapter.proxy.stop,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["proxyStatus"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["proxyStatus"] });
+      queryClient.invalidateQueries({ queryKey: ["adminStatus"] });
+    },
     onError: (err) => {
       toast.error(`${t("settings.proxy.stop")} ${t("common.failed")}: ${err}`, { duration: Infinity });
     },

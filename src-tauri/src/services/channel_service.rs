@@ -182,6 +182,14 @@ pub struct FetchModelsResult {
 
 // Service functions – thin wrappers around existing logic
 
+#[derive(Serialize)]
+pub struct TestChannelResult {
+    pub success: bool,
+    pub latency_ms: u64,
+    pub status_code: Option<u16>,
+    pub message: String,
+}
+
 pub fn update_channel_response_ms(
     db: &Database,
     params: UpdateResponseMsParams,
@@ -1011,4 +1019,99 @@ fn dedup_models(models: Vec<ModelInfo>) -> Vec<ModelInfo> {
         .filter(|m| !m.id.eq_ignore_ascii_case("auto") && !m.name.eq_ignore_ascii_case("auto"))
         .filter(|m| seen.insert(m.name.clone()))
         .collect()
+}
+
+/// Test a channel by actually chatting with the model.
+/// Sends "请只回复 OK", expects response to contain "OK" (case-insensitive).
+/// Records latency and returns success/failure with HTTP status code.
+pub async fn test_channel_chat(
+    base_url: &str,
+    api_key: &str,
+    api_type: &str,
+    model: &str,
+) -> TestChannelResult {
+    let start = std::time::Instant::now();
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return TestChannelResult {
+                success: false,
+                latency_ms: 0,
+                status_code: None,
+                message: format!("Failed to create HTTP client: {}", e),
+            };
+        }
+    };
+    let adapter = get_adapter(api_type);
+    let chat_url = adapter.build_chat_url(base_url, model);
+
+    let body = serde_json::json!({
+        "model": model,
+        "messages": [
+            {"role": "user", "content": "请只回复 OK"}
+        ],
+        "max_tokens": 10,
+        "temperature": 0.0
+    });
+
+    let req = adapter.apply_auth(
+        client
+            .post(&chat_url)
+            .header("Content-Type", "application/json"),
+        api_key,
+    );
+
+    match req.json(&body).send().await {
+        Ok(resp) => {
+            let status_code = resp.status().as_u16();
+            let latency = start.elapsed().as_millis() as u64;
+
+            if status_code != 200 {
+                return TestChannelResult {
+                    success: false,
+                    latency_ms: latency,
+                    status_code: Some(status_code),
+                    message: format!("HTTP {}", status_code),
+                };
+            }
+
+            match resp.text().await {
+                Ok(text) => {
+                    if text.to_lowercase().contains("ok") {
+                        TestChannelResult {
+                            success: true,
+                            latency_ms: latency,
+                            status_code: Some(status_code),
+                            message: "OK".to_string(),
+                        }
+                    } else {
+                        TestChannelResult {
+                            success: false,
+                            latency_ms: latency,
+                            status_code: Some(status_code),
+                            message: "Response does not contain 'OK'".to_string(),
+                        }
+                    }
+                }
+                Err(e) => TestChannelResult {
+                    success: false,
+                    latency_ms: latency,
+                    status_code: Some(status_code),
+                    message: format!("Read response body error: {}", e),
+                },
+            }
+        }
+        Err(e) => {
+            let latency = start.elapsed().as_millis() as u64;
+            TestChannelResult {
+                success: false,
+                latency_ms: latency,
+                status_code: None,
+                message: format!("Request failed: {}", e),
+            }
+        }
+    }
 }

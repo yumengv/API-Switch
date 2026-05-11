@@ -239,15 +239,17 @@ export const ChannelManager: React.FC = () => {
     for (const ch of toTest) {
       setTestingChannelId(ch.id);
       try {
-        const probe = await api.channels.probeUrl(ch.base_url);
-        if (probe.reachable && probe.latency_ms > 0) {
-          const ms = String(probe.latency_ms);
+        const result = await api.channels.probeUrl(ch.base_url);
+        if (result.reachable) {
+          const ms = String(result.latency_ms);
           await api.channels.updateResponseMs(ch.id, ms);
           results[ch.id] = ms;
         } else {
+          await api.channels.update({ id: ch.id, enabled: false });
           results[ch.id] = 'X';
         }
       } catch {
+        await api.channels.update({ id: ch.id, enabled: false });
         results[ch.id] = 'X';
       }
       setTestResults({ ...results });
@@ -633,13 +635,11 @@ function ChannelEditorDialog({
 
   const probeSeqRef = React.useRef(0);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const isEdit = !!channel;
 
   useEffect(() => {
     if (!open) return;
-    setError(null);
     setSaving(false);
     setAvailableModels([]);
     setSelectedModels([]);
@@ -749,7 +749,7 @@ function ChannelEditorDialog({
 
   const handleFetchModels = async () => {
     if (probingUrl) {
-      setError('URL 还在检测中，请稍后再试');
+      toast.error('URL 还在检测中，请稍后再试');
       return;
     }
 
@@ -768,13 +768,12 @@ function ChannelEditorDialog({
     }
 
     if (!probe.reachable) {
-      setError(`URL 不可达：${probe.message}`);
+      toast.error(`URL 不可达：${probe.message}`);
       return;
     }
 
     setFetchingModels(true);
     setModelsValidated(false);
-    setError(null);
     try {
       const result = await api.channels.fetchModelsDirect(form.api_type, form.base_url, form.api_key, false);
       setForm((prev) => ({
@@ -794,7 +793,7 @@ function ChannelEditorDialog({
       const nextSelected = await autoSelectModels(normalizedModels, channel?.id);
       setSelectedModels(nextSelected);
     } catch (err) {
-      setError(getChannelErrorMessage(err, '获取模型列表失败'));
+      toast.error(getChannelErrorMessage(err, '获取模型列表失败'));
     } finally {
       setFetchingModels(false);
     }
@@ -823,12 +822,11 @@ function ChannelEditorDialog({
   const handleSave = async () => {
     if (saving || fetchingModels) return;
     if (!canSave) {
-      setError('请填写渠道名称、Base URL 和 API Key 后再保存');
+      toast.error('请填写渠道名称、Base URL 和 API Key 后再保存');
       return;
     }
     setSaving(true);
     setSaveStage('开始保存渠道...');
-    setError(null);
     try {
       let channelId = form.id;
       if (channelId) {
@@ -924,8 +922,7 @@ function ChannelEditorDialog({
 
         <div className="flex-1 min-h-0 overflow-auto">
           <div className="space-y-4 pb-4">
-            {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
-            {!error && saveStage && <div className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">{saveStage}</div>}
+            {saveStage && <div className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">{saveStage}</div>}
             {endpointVerificationMessage && (
               <div className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
                 {endpointVerificationMessage}

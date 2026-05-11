@@ -1,5 +1,6 @@
 use crate::database::{Channel, ModelInfo};
 use crate::error::AppError;
+use crate::services::channel_service::{self, FetchModelsResult, ProbeResult, TestChannelResult};
 use crate::AppState;
 use serde::Deserialize;
 use tauri::{Emitter, State};
@@ -84,9 +85,6 @@ pub(crate) struct UpdateResponseMsParams {
     response_ms: String,
 }
 
-use crate::services::channel_service;
-use crate::services::channel_service::{FetchModelsResult, ProbeResult};
-
 #[tauri::command]
 pub fn update_channel_response_ms(
     state: State<'_, AppState>,
@@ -159,6 +157,54 @@ pub fn delete_channel(
 #[tauri::command]
 pub async fn probe_url(url: String) -> Result<ProbeResult, AppError> {
     channel_service::probe_url(url).await
+}
+
+#[tauri::command]
+pub async fn test_channel(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    channel_id: String,
+) -> Result<TestChannelResult, AppError> {
+    let channel = state.db.get_channel(&channel_id)?;
+
+    let model = channel
+        .selected_models
+        .first()
+        .or_else(|| channel.available_models.first().map(|m| &m.name))
+        .cloned()
+        .unwrap_or_else(|| "gpt-3.5-turbo".to_string());
+
+    let result = channel_service::test_channel_chat(
+        &channel.base_url,
+        &channel.api_key,
+        &channel.api_type,
+        &model,
+    )
+    .await;
+
+    if result.success && result.status_code == Some(200) {
+        let _ =
+            state
+                .db
+                .update_channel_response_ms(&channel_id, &result.latency_ms.to_string());
+        let _ = channel_service::update_channel(
+            &state.db,
+            Some(&app),
+            channel_service::UpdateChannelParams {
+                id: channel_id.clone(),
+                name: None,
+                api_type: None,
+                base_url: None,
+                api_key: None,
+                enabled: Some(true),
+                notes: None,
+            },
+        );
+    } else {
+        let _ = state.db.disable_channel(&channel_id);
+    }
+
+    Ok(result)
 }
 
 #[tauri::command]

@@ -11,7 +11,8 @@
     "cli": "Connect CLI",
     "settings": "Settings",
     "guide": "Guide",
-    "translator": "Translator"
+    "translator": "Translator",
+    "logout": "Logout"
   },
   "apiPool": {
     "title": "API Management",

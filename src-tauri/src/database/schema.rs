@@ -165,6 +165,7 @@ pub fn create_tables(conn: &Connection) -> Result<(), AppError> {
         ("web_admin_password", ""),
         ("web_admin_port", "9099"),
         ("show_conversation_model", "1"),
+        ("app_version", "0.6.2"),
     ];
 
     for (key, value) in defaults {
