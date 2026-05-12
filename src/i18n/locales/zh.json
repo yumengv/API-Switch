@@ -1,4 +1,4 @@
-{
+﻿{
   "app": {
     "title": "API Switch"
   },
@@ -363,7 +363,7 @@
 
       "defaultSortMode": "默认排序方式",
       "defaultSortModeDesc": "API 管理页面的默认模型排序方式",
-      "showConversationModel": "显示对话模型",
+      "showConversationModel": "显示对话模型（实验）",
       "showConversationModelDesc": "流式回答结束时追加实际命中的模型名称",
       "currentVersion": "当前版本"
     },
