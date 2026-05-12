@@ -1,26 +1,30 @@
 import { useState } from "react";
 import { Power } from "lucide-react";
 import { toast } from "sonner";
+import { useTranslation } from "react-i18next";
 import { login, setToken, clearToken, type AdminHttpError } from "@/lib/webAuth";
 
-function formatSeconds(seconds?: number): string {
-  if (!seconds || seconds <= 0) return "稍后再试";
-  if (seconds < 60) return `${seconds} 秒后再试`;
-  return `${Math.ceil(seconds / 60)} 分钟后再试`;
-}
+type TFuncType = (key: string, options?: Record<string, unknown>) => string;
 
-function getErrorMessage(error: unknown, fallback: string): string {
+function getErrorMessage(t: TFuncType, error: unknown, fallback: string): string {
   if (!error || !(error instanceof Error)) return fallback;
   const adminError = error as AdminHttpError;
-  if (adminError.isRateLimitError) return `登录尝试过于频繁，请在 ${formatSeconds(adminError.retryAfterSeconds)}。`;
-  if (adminError.isNetworkError) return "无法连接 Web Admin 服务，请确认服务正在运行。";
+  if (adminError.isRateLimitError) {
+    const timeStr = adminError.retryAfterSeconds && adminError.retryAfterSeconds > 0 
+      ? (adminError.retryAfterSeconds < 60 
+          ? t("auth.secondsLater", { seconds: adminError.retryAfterSeconds })
+          : t("auth.minutesLater", { minutes: Math.ceil(adminError.retryAfterSeconds / 60) }))
+      : t("auth.tryAgainLater");
+    return t("auth.rateLimit", { time: timeStr });
+  }
+  if (adminError.isNetworkError) return t("auth.networkError");
   if (adminError.code === "INVALID_CREDENTIALS") {
     if (typeof adminError.remainingAttempts === "number") {
-      return `用户名或密码错误，还可尝试 ${adminError.remainingAttempts} 次。`;
+      return t("auth.invalidCredentialsAttempts", { attempts: adminError.remainingAttempts });
     }
-    return "用户名或密码错误。";
+    return t("auth.invalidCredentials");
   }
-  if (adminError.isAuthError) return "登录已失效，请重新登录。";
+  if (adminError.isAuthError) return t("auth.authFailed");
   return adminError.message || fallback;
 }
 
@@ -31,6 +35,7 @@ interface LoginScreenProps {
 }
 
 export function LoginScreen({ onAuthenticated, message, onRetry }: LoginScreenProps) {
+  const { t } = useTranslation();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -43,11 +48,11 @@ export function LoginScreen({ onAuthenticated, message, onRetry }: LoginScreenPr
     try {
       const response = await login(username, password);
       setToken(response.token);
-      toast.success("登录成功");
+      toast.success(t("auth.loginSuccess"));
       onAuthenticated();
     } catch (err) {
       clearToken();
-      const message = getErrorMessage(err, "登录失败");
+      const message = getErrorMessage(t, err, t("auth.loginFailed"));
       setError(message);
       const adminError = err as AdminHttpError;
       if (adminError?.isRateLimitError) toast.warning(message);
@@ -63,8 +68,8 @@ export function LoginScreen({ onAuthenticated, message, onRetry }: LoginScreenPr
         <div className="mb-6 flex items-center gap-3">
           <Power className="h-6 w-6 text-primary" />
           <div>
-            <h1 className="text-xl font-semibold">API Switch Web Admin</h1>
-            <p className="mt-1 text-sm text-muted-foreground">使用 Web 管理账号登录</p>
+            <h1 className="text-xl font-semibold">{t("auth.title")}</h1>
+            <p className="mt-1 text-sm text-muted-foreground">{t("auth.subtitle")}</p>
           </div>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -73,28 +78,30 @@ export function LoginScreen({ onAuthenticated, message, onRetry }: LoginScreenPr
               <div>{message}</div>
               {onRetry && (
                 <button type="button" onClick={onRetry} className="mt-2 text-primary underline-offset-2 hover:underline">
-                  重试连接
+                  {t("auth.retryConnection")}
                 </button>
               )}
             </div>
           )}
           <label className="block space-y-1.5">
-            <span className="text-sm font-medium">用户名</span>
+            <span className="text-sm font-medium">{t("auth.username")}</span>
             <input
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
               value={username}
               onChange={(event) => setUsername(event.target.value)}
               autoComplete="username"
+              placeholder={t("auth.usernamePlaceholder")}
             />
           </label>
           <label className="block space-y-1.5">
-            <span className="text-sm font-medium">密码</span>
+            <span className="text-sm font-medium">{t("auth.password")}</span>
             <input
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               type="password"
               autoComplete="current-password"
+              placeholder={t("auth.passwordPlaceholder")}
             />
           </label>
           {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
@@ -103,7 +110,7 @@ export function LoginScreen({ onAuthenticated, message, onRetry }: LoginScreenPr
             disabled={submitting}
             className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {submitting ? "登录中..." : "登录"}
+            {submitting ? t("auth.loggingIn") : t("auth.login")}
           </button>
         </form>
       </div>

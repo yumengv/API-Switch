@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { ChevronDown, ChevronRight, Plug, Terminal } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -78,6 +79,7 @@ function EnvRow({
 }
 
 export function CliPage() {
+  const { t } = useTranslation();
   const { data: settings } = useQuery({ queryKey: ["settings"], queryFn: getSettings });
   const { data: proxyStatus } = useQuery({ queryKey: ["proxyStatus"], queryFn: getProxyStatus, refetchInterval: 2000 });
   const { data: accessKeys } = useQuery({ queryKey: ["accessKeys"], queryFn: listAccessKeys });
@@ -117,15 +119,15 @@ export function CliPage() {
       .map((item) => ({ key: item.key, value: getValue(cli, item) }))
       .filter((item) => item.key && item.value);
     await setUserEnvVars(vars);
-    toast.success(`${cli.name} 环境变量已写入系统`);
+    toast.success(`${cli.name} ${t("cli.envWritten")}`);
   };
 
   return (
     <div className="p-6 space-y-6">
       <div>
-        <h1 className="text-xl font-semibold">连接 CLI</h1>
+        <h1 className="text-xl font-semibold">{t("cli.title")}</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          选择 CLI 后点击连接，将当前卡片中的环境变量写入系统用户环境变量。默认只显示最小配置；展开后可配置扩展变量。
+          {t("cli.description")}
         </p>
       </div>
 
@@ -146,7 +148,7 @@ export function CliPage() {
                   </div>
                   <Button size="sm" onClick={() => connect(cli)}>
                     <Plug className="h-3.5 w-3.5" />
-                    连接
+                    {t("cli.connect")}
                   </Button>
                 </div>
               </CardHeader>
@@ -164,9 +166,9 @@ export function CliPage() {
                 </div>
 
                 <div className="rounded-md border bg-muted/30 p-3 text-xs space-y-1">
-                  <div><span className="text-muted-foreground">Base URL:</span> <code>{baseUrl}</code></div>
-                  <div><span className="text-muted-foreground">API KEY:</span> <code>auto</code></div>
-                  <div><span className="text-muted-foreground">model:</span> <code>auto</code></div>
+                  <div><span className="text-muted-foreground">{t("cli.summary.baseUrl")}:</span> <code>{baseUrl}</code></div>
+                  <div><span className="text-muted-foreground">{t("cli.summary.apiKey")}:</span> <code>auto</code></div>
+                  <div><span className="text-muted-foreground">{t("cli.summary.model")}:</span> <code>auto</code></div>
                 </div>
 
                 {cli.env.extended.length ? (
@@ -177,7 +179,7 @@ export function CliPage() {
                     onClick={() => setExpanded((prev) => ({ ...prev, [cli.id]: !prev[cli.id] }))}
                   >
                     {isExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-                    {isExpanded ? "收起扩展配置" : "展开扩展配置"}
+                    {isExpanded ? t("cli.collapseConfig") : t("cli.expandConfig")}
                   </Button>
                 ) : null}
               </CardContent>

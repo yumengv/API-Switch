@@ -119,7 +119,7 @@ export function TranslationRelayPanel() {
                     id="translation-target-lang"
                     value={targetLang}
                     onChange={(event) => setTargetLang(event.target.value)}
-                    placeholder="zh"
+                    placeholder={t("translator.defaultTargetLang")}
                     disabled={submitting}
                   />
                 </div>
@@ -157,8 +157,8 @@ export function TranslationRelayPanel() {
                 <div className="text-xs text-muted-foreground">{t('translator.updatedAt')}: {formatUpdatedAt(result.updatedAt)}</div>
               </>
             ) : (
-              <div className="flex h-40 items-center justify-center rounded-md border border-dashed text-sm text-muted-foreground">
-                尚未{t('translator.relayPanel.submitTitle')}
+<div className="flex h-40 items-center justify-center rounded-md border border-dashed text-sm text-muted-foreground">
+                {t("translator.notSubmittedYet", { submitTitle: t("translator.relayPanel.submitTitle") })}
               </div>
             )}
           </CardContent>
@@ -181,7 +181,7 @@ export function TranslationRelayView() {
       setLatest(payload);
       setError(null);
     } catch (err) {
-      setError(getErrorMessage(err, t('translator.viewPanel.fetchFailed')));
+      setError(getErrorMessage(err, t('translator.fetchFailed')));
     } finally {
       setLoading(false);
     }

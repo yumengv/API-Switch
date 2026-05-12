@@ -176,7 +176,7 @@ export function TokenManager() {
               <Input
                 value={newKeyName}
                 onChange={(e) => setNewKeyName(e.target.value)}
-                placeholder="My Laptop"
+                placeholder={t("token.deviceNamePlaceholder")}
               />
             </div>
           </div>

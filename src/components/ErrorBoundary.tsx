@@ -3,6 +3,9 @@ import { AlertTriangle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "react-i18next";
 
+// 注意：ErrorBoundary 是类组件，不能在类内部使用 Hook
+// 但 ErrorFallback 函数组件已经使用 useTranslation
+
 interface ErrorBoundaryProps {
   children: React.ReactNode;
   fallback?: React.ReactNode;
@@ -38,26 +41,8 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
         return this.props.fallback;
       }
 
-      return (
-        <div className="flex min-h-[400px] flex-col items-center justify-center gap-4 rounded-lg border bg-background p-6 text-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-destructive/10 text-destructive">
-            <AlertTriangle className="h-6 w-6" />
-          </div>
-          <div className="space-y-2">
-            <h2 className="text-lg font-semibold">Something went wrong</h2>
-            <p className="max-w-md text-sm text-muted-foreground">
-              An error occurred while rendering this page. You can try to reload it.
-            </p>
-          </div>
-          <div className="max-w-md overflow-auto rounded border bg-muted p-3 text-left text-xs text-muted-foreground">
-            <pre className="whitespace-pre-wrap">{this.state.error.message}</pre>
-          </div>
-          <Button onClick={this.handleTryAgain} className="gap-2">
-            <RefreshCw className="h-4 w-4" />
-            Try Again
-          </Button>
-        </div>
-      );
+      // 使用 ErrorFallback 组件统一使用 i18n
+      return <ErrorFallback error={this.state.error} resetErrorBoundary={this.handleTryAgain} />;
     }
 
     return this.props.children;

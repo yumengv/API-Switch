@@ -190,7 +190,7 @@ export const ChannelManager: React.FC = () => {
   const [testResults, setTestResults] = useState<Record<string, string>>({});
   const [deleteTarget, setDeleteTarget] = useState<Channel | null>(null);
 
-  const error = queryError ? getChannelErrorMessage(queryError, '渠道列表加载失败') : null;
+  const error = queryError ? getChannelErrorMessage(queryError, t('channel.editor.listLoadFailed', '渠道列表加载失败')) : null;
 
   useEvent("channels-changed", () => {
     queryClient.invalidateQueries({ queryKey: ["channels"] });
@@ -265,12 +265,12 @@ export const ChannelManager: React.FC = () => {
       <div className="space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h1 className="text-xl font-semibold">渠道管理</h1>
-            <p className="mt-1 text-sm text-muted-foreground">统一管理上游渠道、模型同步与基础配置。</p>
+            <h1 className="text-xl font-semibold">{t('channel.editor.newChannel')}</h1>
+            <p className="mt-1 text-sm text-muted-foreground">{t('channel.description')}</p>
           </div>
           <Button size="sm" className="gap-1.5" onClick={openCreate}>
             <Plus className="h-4 w-4" />
-            添加渠道
+            {t('channel.editor.tipsAdd')}
           </Button>
         </div>
 
@@ -289,26 +289,26 @@ export const ChannelManager: React.FC = () => {
             </colgroup>
             <thead className="bg-muted/50">
               <tr className="border-b border-border">
-                <th className="px-4 py-3 text-left font-medium">渠道名称</th>
-                <th className="px-4 py-3 text-left font-medium">类型</th>
-                <th className="px-4 py-3 text-left font-medium">Base URL</th>
-                <th className="px-4 py-3 text-left font-medium">状态</th>
+                <th className="px-4 py-3 text-left font-medium">{t('channel.name')}</th>
+                <th className="px-4 py-3 text-left font-medium">{t('channel.type')}</th>
+                <th className="px-4 py-3 text-left font-medium">{t('channel.baseUrl')}</th>
+                <th className="px-4 py-3 text-left font-medium">{t('channel.status')}</th>
                 <th className="px-4 py-3 text-left font-medium whitespace-nowrap">
                   <div className="flex items-center gap-1">
-                    <span>响应</span>
+                    <span>{t('channel.responseTime')}</span>
                     <button
                       type="button"
                       onClick={testAllChannels}
                       disabled={testingChannelId !== null}
                       className="text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
-                      title="一键测速"
+                      title={t('channel.testAllLatency')}
                     >
                       <RefreshCw className={cn('h-3.5 w-3.5', testingChannelId !== null && 'animate-spin')} />
                     </button>
                   </div>
                 </th>
-                <th className="px-4 py-3 text-center font-medium">模型</th>
-                <th className="px-4 py-3 text-right font-medium">操作</th>
+                <th className="px-4 py-3 text-center font-medium">{t('channel.modelCount')}</th>
+                <th className="px-4 py-3 text-right font-medium">{t('channel.actions')}</th>
               </tr>
             </thead>
             <tbody>
@@ -395,7 +395,7 @@ export const ChannelManager: React.FC = () => {
                 </>
               ) : channels.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">暂无渠道，请先添加渠道。</td>
+                  <td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">{t('channel.editor.channelListEmpty')}</td>
                 </tr>
               ) : (
                 channels.map((channel) => (
@@ -460,6 +460,7 @@ function ChannelRow({
   testResults?: Record<string, string>;
   entryCountMap?: Map<string, number>;
 }) {
+  const { t } = useTranslation();
   const api = useApiAdapter();
   const [saving, setSaving] = useState(false);
   const [fetching, setFetching] = useState(false);
@@ -477,7 +478,7 @@ function ChannelRow({
       await api.channels.update({ id: channel.id, enabled: !channel.enabled });
       await onChanged();
     } catch (err) {
-      setRowError(getChannelErrorMessage(err, '保存渠道状态失败'));
+      setRowError(getChannelErrorMessage(err, t('channel.editor.saveStatusFailed', '保存渠道状态失败')));
     } finally {
       setSaving(false);
     }
@@ -491,7 +492,7 @@ function ChannelRow({
       const result = await api.channels.probeUrl(channel.base_url);
       setProbeResult(`${result.latency_ms}ms`);
     } catch (err) {
-      setRowError(getChannelErrorMessage(err, '测速失败'));
+      setRowError(getChannelErrorMessage(err, t('channel.editor.probeFailed', '测速失败')));
     } finally {
       setProbing(false);
     }
@@ -504,7 +505,7 @@ function ChannelRow({
       await api.channels.fetchModels(channel.id);
       await onChanged();
     } catch (err) {
-      setRowError(getChannelErrorMessage(err, '获取模型列表失败'));
+      setRowError(getChannelErrorMessage(err, t('channel.editor.fetchModelsFailed', '获取模型列表失败')));
     } finally {
       setFetching(false);
     }
@@ -517,7 +518,7 @@ function ChannelRow({
       await api.channels.selectModels(channel.id, modelNames, availableModels, []);
       await onChanged();
     } catch (err) {
-      setRowError(getChannelErrorMessage(err, '同步 API 池失败'));
+      setRowError(getChannelErrorMessage(err, t('channel.editor.syncFailed', '同步 API 池失败')));
     } finally {
       setSaving(false);
     }
@@ -553,7 +554,7 @@ function ChannelRow({
         </td>
         <td className="px-4 py-3">
           <span className={cn('rounded-full px-2.5 py-1 text-xs font-medium', channel.enabled ? 'bg-green-100 text-green-700' : 'bg-muted text-muted-foreground')}>
-            {channel.enabled ? '启用' : '禁用'}
+            {channel.enabled ? t('channel.enabled') : t('channel.disabled')}
           </span>
         </td>
         <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
@@ -567,26 +568,26 @@ function ChannelRow({
               : persistedValue;
 
             if (testValue === 'X' && !persistedValue) {
-              return <span className="text-red-500" title="测速失败"><XCircle className="h-3.5 w-3.5" /></span>;
+              return <span className="text-red-500" title={t('common.failed')}><XCircle className="h-3.5 w-3.5" /></span>;
             }
 
             if (displayValue) {
               return <span className="text-green-600">{formatResponseMs(displayValue)}</span>;
             }
 
-            return <span className="text-red-500" title="未测速"><XCircle className="h-3.5 w-3.5" /></span>;
+            return <span className="text-red-500" title={t('channel.testAllLatency')}><XCircle className="h-3.5 w-3.5" /></span>;
           })()}
         </td>
         <td className="px-4 py-3 whitespace-nowrap text-center">{entryCountMap?.get(channel.id) ?? 0} / {availableModels.length}</td>
         <td className="px-4 py-3">
           <div className="flex justify-end gap-1">
-            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={(event) => { event.stopPropagation(); onEdit(); }} title="编辑">
+            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={(event) => { event.stopPropagation(); onEdit(); }} title={t('common.edit')}>
               <Edit className="h-4 w-4" />
             </Button>
-            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={(event) => { event.stopPropagation(); toggleEnabled(); }} disabled={saving} title={channel.enabled ? '禁用' : '启用'}>
+            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={(event) => { event.stopPropagation(); toggleEnabled(); }} disabled={saving} title={channel.enabled ? t('channel.disabled') : t('channel.enabled')}>
               {channel.enabled ? <PowerOff className="h-4 w-4" /> : <Power className="h-4 w-4" />}
             </Button>
-            <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={(event) => { event.stopPropagation(); onDelete(); }} title="删除">
+            <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={(event) => { event.stopPropagation(); onDelete(); }} title={t('common.delete')}>
               <Trash2 className="h-4 w-4" />
             </Button>
           </div>
@@ -597,7 +598,7 @@ function ChannelRow({
         <tr className="border-b border-border bg-muted/20">
           <td colSpan={7} className="px-4 py-3">
             <div className="space-y-1 text-sm max-w-3xl">
-              <div className="font-medium text-muted-foreground">备注</div>
+              <div className="font-medium text-muted-foreground">{t('channel.notes')}</div>
               <pre className="whitespace-pre-wrap break-all">{channel.notes}</pre>
             </div>
           </td>
@@ -618,6 +619,7 @@ function ChannelEditorDialog({
   onOpenChange: (value: boolean) => void;
   onSaved: () => Promise<void>;
 }) {
+  const { t } = useTranslation();
   const api = useApiAdapter();
   const queryClient = useQueryClient();
   const [form, setForm] = useState<ChannelFormState>(DEFAULT_FORM);
@@ -671,12 +673,14 @@ function ChannelEditorDialog({
         const result = await api.channels.probeUrl(form.base_url.trim());
         if (probeSeqRef.current === seq) {
           setUrlProbe(result as { reachable: boolean; latency_ms: number; status_code?: number; detected_type?: string; message: string });
-          setEndpointVerificationMessage(result.reachable ? `端点可达：${result.message}` : `端点不可达：${result.message}`);
+          setEndpointVerificationMessage(result.reachable
+            ? t('channel.editor.endpointReachable', { message: result.message, defaultValue: `端点可达：${result.message}` })
+            : t('channel.editor.endpointUnreachable', { message: result.message, defaultValue: `端点不可达：${result.message}` }));
         }
       } catch {
         if (probeSeqRef.current === seq) {
-          setUrlProbe({ reachable: false, status_code: undefined, latency_ms: 0, detected_type: undefined, message: 'Probe failed' });
-          setEndpointVerificationMessage('端点校对失败');
+          setUrlProbe({ reachable: false, status_code: undefined, latency_ms: 0, detected_type: undefined, message: t('channel.editor.probeFailedGeneric', 'Probe failed') });
+          setEndpointVerificationMessage(t('channel.editor.endpointProbeFailed', '端点校对失败'));
         }
       } finally {
         if (probeSeqRef.current === seq) {
@@ -685,7 +689,7 @@ function ChannelEditorDialog({
       }
     }, 800);
     return () => clearTimeout(timer);
-  }, [api, form.base_url]);
+  }, [api, form.base_url, t]);
 
   const canSave = !!(form.name.trim() && form.base_url.trim() && form.api_key.trim());
 
@@ -749,7 +753,7 @@ function ChannelEditorDialog({
 
   const handleFetchModels = async () => {
     if (probingUrl) {
-      toast.error('URL 还在检测中，请稍后再试');
+      toast.error(t('channel.editor.probingInProgress', 'URL 还在检测中，请稍后再试'));
       return;
     }
 
@@ -760,7 +764,7 @@ function ChannelEditorDialog({
         probe = await api.channels.probeUrl(form.base_url.trim()) as { reachable: boolean; latency_ms: number; status_code?: number; detected_type?: string; message: string };
         setUrlProbe(probe);
       } catch {
-        probe = { reachable: false, status_code: undefined, latency_ms: 0, detected_type: undefined, message: 'Probe failed' };
+        probe = { reachable: false, status_code: undefined, latency_ms: 0, detected_type: undefined, message: t('channel.editor.probeFailedGeneric', 'Probe failed') };
         setUrlProbe(probe);
       } finally {
         setProbingUrl(false);
@@ -768,7 +772,7 @@ function ChannelEditorDialog({
     }
 
     if (!probe.reachable) {
-      toast.error(`URL 不可达：${probe.message}`);
+      toast.error(t('channel.editor.urlUnreachable', { message: probe.message, defaultValue: `URL 不可达：${probe.message}` }));
       return;
     }
 
@@ -782,7 +786,7 @@ function ChannelEditorDialog({
         base_url: result.corrected_base_url || prev.base_url,
       }));
       setEndpointVerified(true);
-      setEndpointVerificationMessage(`端点校对通过，已识别为 ${result.detected_type.toUpperCase()}`);
+      setEndpointVerificationMessage(t('channel.editor.endpointVerifiedMessage', { type: result.detected_type.toUpperCase(), defaultValue: `端点校对通过，已识别为 ${result.detected_type.toUpperCase()}` }));
       setModelsValidated(true);
       const normalizedModels: ModelInfo[] = (result.models || []).map((item, index) => ({
         id: String(item.id ?? item.name ?? index),
@@ -793,7 +797,7 @@ function ChannelEditorDialog({
       const nextSelected = await autoSelectModels(normalizedModels, channel?.id);
       setSelectedModels(nextSelected);
     } catch (err) {
-      toast.error(getChannelErrorMessage(err, '获取模型列表失败'));
+        toast.error(getChannelErrorMessage(err, t('channel.editor.fetchModelsFailed', '获取模型列表失败')));
     } finally {
       setFetchingModels(false);
     }
@@ -822,15 +826,15 @@ function ChannelEditorDialog({
   const handleSave = async () => {
     if (saving || fetchingModels) return;
     if (!canSave) {
-      toast.error('请填写渠道名称、Base URL 和 API Key 后再保存');
+      toast.error(t('channel.editor.requiredFieldsHint', '请填写渠道名称、Base URL 和 API Key 后再保存'));
       return;
     }
     setSaving(true);
-    setSaveStage('开始保存渠道...');
+    setSaveStage(t('channel.editor.savingStart', '开始保存渠道...'));
     try {
       let channelId = form.id;
       if (channelId) {
-        setSaveStage('正在更新渠道信息...');
+        setSaveStage(t('channel.editor.updating', '正在更新渠道信息...'));
         const params: UpdateChannelParams = {
           id: channelId,
           name: form.name,
@@ -842,7 +846,7 @@ function ChannelEditorDialog({
         };
         await api.channels.update(params);
       } else {
-        setSaveStage('正在创建渠道...');
+        setSaveStage(t('channel.editor.creating', '正在创建渠道...'));
         const params: CreateChannelParams = {
           name: form.name,
           api_type: form.api_type,
@@ -856,10 +860,10 @@ function ChannelEditorDialog({
 
       if (urlProbe?.reachable && urlProbe.latency_ms > 0 && channelId) {
         try {
-          setSaveStage('正在写入响应时间...');
+          setSaveStage(t('channel.editor.writingResponseMs', '正在写入响应时间...'));
           await api.channels.updateResponseMs(channelId, String(urlProbe.latency_ms));
         } catch (err) {
-          toast.error(getChannelErrorMessage(err, '渠道已保存，但响应时间写入失败'));
+          toast.error(getChannelErrorMessage(err, t('channel.editor.responseWriteFailed', '渠道已保存，但响应时间写入失败')));
           return;
         }
       }
@@ -867,7 +871,7 @@ function ChannelEditorDialog({
       // Always sync selected models to handle additions and deletions reliably.
       if (channelId) {
         try {
-          setSaveStage('正在同步所选模型...');
+          setSaveStage(t('channel.editor.syncingModels', '正在同步所选模型...'));
           await Promise.race([
             api.channels.selectModels(
               channelId,
@@ -875,21 +879,21 @@ function ChannelEditorDialog({
               availableModels,
               selectedModels.map(buildEntryCatalogMeta),
             ),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('模型同步超时')), 10000)),
+            new Promise((_, reject) => setTimeout(() => reject(new Error(t('channel.editor.syncTimeout', '模型同步超时'))), 10000)),
           ]);
         } catch (err) {
-          toast.error(getChannelErrorMessage(err, '渠道已保存，但模型同步失败'));
+          toast.error(getChannelErrorMessage(err, t('channel.editor.modelSyncFailed', '渠道已保存，但模型同步失败')));
           return;
         }
       }
 
-      setSaveStage('正在刷新数据...');
+      setSaveStage(t('channel.editor.refreshingData', '正在刷新数据...'));
       await onSaved();
       queryClient.invalidateQueries({ queryKey: ['entries'] });
-      setSaveStage('正在关闭窗口...');
+      setSaveStage(t('channel.editor.closingWindow', '正在关闭窗口...'));
       onOpenChange(false);
     } catch (err) {
-      toast.error(getChannelErrorMessage(err, '保存渠道失败'));
+      toast.error(getChannelErrorMessage(err, t('channel.editor.saveFailed', '保存渠道失败')));
     } finally {
       setSaveStage(null);
       setSaving(false);
@@ -917,7 +921,7 @@ function ChannelEditorDialog({
     }}>
       <DialogContent className="sm:max-w-2xl max-h-[85vh] flex flex-col">
         <DialogHeader>
-          <DialogTitle>{channel ? '编辑渠道' : '添加渠道'}</DialogTitle>
+          <DialogTitle>{channel ? t('channel.editor.editTitle') : t('channel.editor.title')}</DialogTitle>
         </DialogHeader>
 
         <div className="flex-1 min-h-0 overflow-auto">
@@ -930,31 +934,31 @@ function ChannelEditorDialog({
             )}
 
             <div className="space-y-2">
-              <Label>渠道名称</Label>
-              <Input value={form.name} onChange={(event) => setValue('name', event.target.value)} placeholder="例如 OpenAI" />
+              <Label>{t('channel.editor.channelName')}</Label>
+              <Input value={form.name} onChange={(event) => setValue('name', event.target.value)} placeholder={t('channel.form.placeholderName')} />
             </div>
 
             <div className="space-y-2">
-              <Label>API 类型</Label>
+              <Label>{t('channel.editor.apiType')}</Label>
               <Select value={form.api_type} onValueChange={handleApiTypeChange}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   {API_TYPES.map((item) => (
-                    <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
+                    <SelectItem key={item.value} value={item.value}>{t(`channel.providers.${item.value}`, item.label)}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
 
             <div className="space-y-2">
-              <Label>Base URL</Label>
+              <Label>{t('channel.editor.baseUrl')}</Label>
               <div className="relative">
                 <Input
                   value={form.base_url}
                   onChange={(event) => setValue('base_url', event.target.value)}
-                  placeholder="https://api.example.com"
+                  placeholder={t('channel.form.placeholderBaseUrl')}
                   className={urlProbe ? (urlProbe.reachable ? 'pr-24 border-green-500/50 focus-visible:ring-green-500/30' : 'pr-24 border-red-500/50 focus-visible:ring-red-500/30') : 'pr-8'}
                 />
                 <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-1 pointer-events-none">
@@ -970,17 +974,17 @@ function ChannelEditorDialog({
             </div>
 
             <div className="space-y-2">
-              <Label>API Key</Label>
+              <Label>{t('channel.editor.apiKey')}</Label>
               <div className="relative">
                 <Input type={showApiKey ? 'text' : 'password'} value={form.api_key} onChange={(event) => setValue('api_key', event.target.value)} className="pr-10" />
                 <Button type="button" variant="ghost" size="icon" className="absolute right-0 top-0 h-full px-3 hover:bg-transparent" onClick={() => setShowApiKey(!showApiKey)}>
-                  {showApiKey ? '隐藏' : '显示'}
+                  {showApiKey ? t('channel.editor.hidePassword') : t('channel.editor.showPassword')}
                 </Button>
               </div>
             </div>
 
             <div className="space-y-2">
-              <Label>备注</Label>
+              <Label>{t('channel.editor.notes')}</Label>
               <Input value={form.notes} onChange={(event) => setValue('notes', event.target.value)} />
             </div>
 
@@ -990,28 +994,28 @@ function ChannelEditorDialog({
             <div className="flex items-center justify-between">
               <div>
                 <div className="text-sm font-medium">
-                  {availableModels.length > 0 ? `模型列表（${availableModels.length}）` : '暂无模型'}
+                  {availableModels.length > 0 ? t('channel.editor.modelsTitle', { count: availableModels.length }) : t('channel.editor.modelsEmpty')}
                 </div>
                 {availableModels.length > 0 ? (
-                  <div className="text-xs text-muted-foreground">已选择 {selectedModels.length} 个</div>
+                  <div className="text-xs text-muted-foreground">{t('channel.editor.modelsSelected', { count: selectedModels.length })}</div>
                 ) : (
                   <div className="text-xs text-muted-foreground">
-                    {modelsValidated ? '当前未返回可选模型' : endpointVerified ? '端点已校验，可继续拉取模型' : '请先校验端点并拉取模型'}
+                    {modelsValidated ? t('channel.editor.modelsEmptyVerified') : endpointVerified ? t('channel.editor.modelsEmptyVerified2') : t('channel.editor.modelsEmptyNote')}
                   </div>
                 )}
               </div>
               <Button size="sm" variant="outline" className="gap-1.5" onClick={handleFetchModels} disabled={!canSave || probingUrl || urlProbe?.reachable === false || fetchingModels}>
                 <RefreshCw className={cn('h-3.5 w-3.5', fetchingModels && 'animate-spin')} />
-                {fetchingModels ? '获取中...' : '获取模型列表'}
+                {fetchingModels ? t('channel.editor.fetching') : t('channel.editor.fetchModels')}
               </Button>
             </div>
 
             {availableModels.length > 0 ? (
               <>
                 <div className="flex flex-wrap gap-2 items-center">
-                  <Input placeholder="搜索模型" value={modelSearch} onChange={(e) => setModelSearch(e.target.value)} className="h-8 text-sm flex-1 min-w-48" />
-                  <Button size="sm" variant="outline" onClick={selectAllFiltered}>全选筛选结果</Button>
-                  <Button size="sm" variant="outline" onClick={clearAllSelected}>清空已选</Button>
+                  <Input placeholder={t('channel.editor.searchPlaceholder')} value={modelSearch} onChange={(e) => setModelSearch(e.target.value)} className="h-8 text-sm flex-1 min-w-48" />
+                  <Button size="sm" variant="outline" onClick={selectAllFiltered}>{t('channel.editor.selectAllFiltered')}</Button>
+                  <Button size="sm" variant="outline" onClick={clearAllSelected}>{t('channel.editor.clearSelected')}</Button>
                 </div>
 
                 <div className="max-h-48 overflow-y-auto rounded-md border border-border bg-background">
@@ -1042,19 +1046,19 @@ function ChannelEditorDialog({
                   </div>
                 )}
               </>
-            ) : (
+) : (
               <div className="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">
-                {modelsValidated ? '未获取到模型，请检查渠道配置或直接保存后稍后同步。' : '请先完成渠道配置，然后点击“获取模型列表”。'}
+                {modelsValidated ? t('channel.editor.emptyPlaceholder2') : t('channel.editor.emptyPlaceholder')}
               </div>
             )}
           </div>
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={handleClose} disabled={saving || fetchingModels}>取消</Button>
+          <Button variant="outline" onClick={handleClose} disabled={saving || fetchingModels}>{t('common.cancel')}</Button>
           <Button onClick={handleSave} disabled={saving || fetchingModels} className="gap-1.5">
             <Save className="h-4 w-4" />
-            {saving ? '保存中...' : '保存'}
+            {saving ? t('channel.editor.saving') : t('common.save')}
           </Button>
         </DialogFooter>
       </DialogContent>

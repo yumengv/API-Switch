@@ -96,15 +96,7 @@
       "placeholder": "输入消息开始测试...",
       "inputPlaceholder": "输入消息... (Enter 发送)"
     },
-    "created": "创建时间",
-    "validation": {
-      "title": "Key 校验",
-      "description": "启用后，所有请求必须携带有效的 Access Key",
-      "enabled": "已启用",
-      "disabled": "已关闭（默认）"
-    },
-    "deleteConfirm": "确定删除令牌 {{name}}？",
-    "keyWarning": "密钥仅显示一次，请妥善保管"
+    "created": "创建时间"
   },
   "channel": {
     "title": "渠道管理",
@@ -134,18 +126,88 @@
     "poolSyncTitle": "API 池联动",
     "poolSyncDesc": "选中的模型会自动同步到 API 池，取消勾选会从 API 池中移除。",
     "poolSyncEmpty": "当前没有同步到 API 池的模型",
-    "models": {
-      "fetch": "获取模型列表",
+    "form": {
+      "titleCreate": "添加渠道",
+      "titleEdit": "编辑渠道",
+      "placeholderName": "例如 OpenAI",
+      "placeholderApiType": "API 类型",
+      "placeholderBaseUrl": "https://api.example.com",
+      "placeholderApiKey": "API Key",
+      "save": "保存",
+      "saving": "保存中...",
+      "cancel": "取消",
+      "saveFailed": "保存渠道失败",
+      "notes": "备注",
+      "enabledLabel": "启用",
+      "placeholderNotes": "备注"
+    },
+    "modelSelection": {
+      "title": "为 {{name}} 选择模型",
+      "placeholder": "model1, model2",
+      "saveFailed": "选择模型失败"
+    },
+    "editor": {
+      "title": "添加渠道",
+      "editTitle": "编辑渠道",
+      "channelName": "渠道名称",
+      "apiType": "API 类型",
+      "baseUrl": "Base URL",
+      "apiKey": "API Key",
+      "notes": "备注",
+      "cancel": "取消",
+      "save": "保存",
+      "saving": "保存中...",
+      "modelsTitle": "模型列表（{{count}}）",
+      "modelsSelected": "已选择 {{count}} 个",
+      "modelsEmpty": "暂无模型",
+      "modelsEmptyNote": "请先校验端点并拉取模型",
+      "modelsEmptyVerified": "当前未返回可选模型",
+      "modelsEmptyVerified2": "端点已校验，可继续拉取模型",
+      "fetchModels": "获取模型列表",
       "fetching": "获取中...",
-      "fetchAndSelect": "获取模型并选择",
-      "selected": "已选择 {{count}} 个模型",
-      "title": "可用模型 ({{count}})",
-      "empty": "点击上方按钮获取可用模型",
-      "search": "搜索模型...",
-      "importFiltered": "导入到 API 池",
-      "selectFiltered": "选中筛选结果",
+      "searchPlaceholder": "搜索模型",
+      "selectAllFiltered": "全选筛选结果",
       "clearSelected": "清空已选",
-      "saveAndSelect": "保存并同步"
+      "emptyPlaceholder": "请先完成渠道配置，然后点击\"获取模型列表\"。",
+      "emptyPlaceholder2": "未获取到模型，请检查渠道配置或直接保存后稍后同步。",
+      "showPassword": "显示",
+      "hidePassword": "隐藏",
+      "newChannel": "添加渠道",
+      "editChannel": "编辑渠道",
+      "tipsAdd": "添加渠道",
+      "channelListEmpty": "暂无渠道，请先添加渠道。",
+      "listLoadFailed": "渠道列表加载失败",
+      "saveStatusFailed": "保存渠道状态失败",
+      "probeFailed": "测速失败",
+      "fetchModelsFailed": "获取模型列表失败",
+      "syncFailed": "同步 API 池失败",
+      "probeFailedGeneric": "探测失败",
+      "endpointProbeFailed": "端点校对失败",
+      "endpointReachable": "端点可达：{{message}}",
+      "endpointUnreachable": "端点不可达：{{message}}",
+      "probingInProgress": "URL 还在检测中，请稍后再试",
+      "urlUnreachable": "URL 不可达：{{message}}",
+      "endpointVerifiedMessage": "端点校对通过，已识别为 {{type}}",
+      "requiredFieldsHint": "请填写渠道名称、Base URL 和 API Key 后再保存",
+      "savingStart": "开始保存渠道...",
+      "updating": "正在更新渠道信息...",
+      "creating": "正在创建渠道...",
+      "writingResponseMs": "正在写入响应时间...",
+      "responseWriteFailed": "渠道已保存，但响应时间写入失败",
+      "syncingModels": "正在同步所选模型...",
+      "syncTimeout": "模型同步超时",
+      "modelSyncFailed": "渠道已保存，但模型同步失败",
+      "refreshingData": "正在刷新数据...",
+      "closingWindow": "正在关闭窗口...",
+      "saveFailed": "保存渠道失败"
+    },
+    "providers": {
+      "custom": "自定义",
+      "openai": "OpenAI",
+      "claude": "Claude",
+      "gemini": "Gemini",
+      "azure": "Azure",
+      "responses": "OpenAI Responses (Beta)"
     },
     "typeChangeDisabled": "编辑模式下不可修改渠道类型",
     "deleteConfirm": "确定删除渠道 {{name}}？关联的 API 池条目也将被删除。"
@@ -160,6 +222,7 @@
     "copied": "已复制",
     "created": "创建时间",
     "enabled": "启用",
+    "deviceNamePlaceholder": "我的笔记本电脑",
     "validation": {
       "title": "Key 校验",
       "description": "启用后，所有请求必须携带有效的 Access Key",
@@ -265,6 +328,19 @@
       "week": "周"
     }
   },
+  "cli": {
+    "title": "连接 CLI",
+    "description": "选择 CLI 后点击连接，将当前卡片中的环境变量写入系统用户环境变量。默认只显示最小配置；展开后可配置扩展变量。",
+    "connect": "连接",
+    "envWritten": "环境变量已写入系统",
+    "expandConfig": "展开扩展配置",
+    "collapseConfig": "收起扩展配置",
+    "summary": {
+      "baseUrl": "Base URL",
+      "apiKey": "API KEY",
+      "model": "model"
+    }
+  },
   "translator": {
     "title": "桌面翻译转发",
     "description": "在桌面侧触发自动翻译，并把翻译结果转发到 Web Admin 端口。",
@@ -278,6 +354,9 @@
     "translating": "翻译中...",
     "relayed": "翻译内容已转发到 Web Admin",
     "failed": "翻译失败",
+    "defaultTargetLang": "zh",
+    "notSubmittedYet": "尚未 {{submitTitle}}",
+    "updatedAt": "更新时间",
     "webPreview": "最新 Web 载荷预览",
     "webTitle": "Web 翻译结果",
     "webDescription": "此页面展示从桌面侧转发到 Web 的最新翻译结果。",
@@ -372,7 +451,7 @@
       "link": "查看使用指南与常见配置"
     }
   },
-  "common": {
+"common": {
     "save": "保存",
     "cancel": "取消",
     "confirm": "确认",
@@ -382,6 +461,7 @@
     "all": "全部",
     "close": "关闭",
     "test": "测试",
+    "toggle": "切换",
     "loading": "加载中...",
     "error": "错误",
     "success": "成功",
@@ -391,7 +471,33 @@
     "failed": "失败",
     "deleteTitle": "删除确认",
     "deleteDesc": "确定删除 {{name}}？",
-    "deleteWarning": "数据删除后将无法恢复，请确定。"
+    "deleteWarning": "数据删除后将无法恢复，请确定。",
+    "tryAgain": "重试"
+  },
+  "error": {
+    "somethingWentWrong": "出错了",
+    "tryReload": "渲染页面时出错。您可以尝试重新加载。"
+  },
+  "auth": {
+    "title": "API Switch Web 管理",
+    "subtitle": "使用 Web 管理账号登录",
+    "username": "用户名",
+    "password": "密码",
+    "usernamePlaceholder": "请输入用户名",
+    "passwordPlaceholder": "请输入密码",
+    "login": "登录",
+    "loggingIn": "登录中...",
+    "loginSuccess": "登录成功",
+    "loginFailed": "登录失败",
+    "retryConnection": "重试连接",
+    "tryAgainLater": "稍后再试",
+    "secondsLater": "{{seconds}}秒后再试",
+    "minutesLater": "{{minutes}}分钟后再试",
+    "rateLimit": "登录尝试过于频繁，请{{time}}。",
+    "networkError": "无法连接 Web Admin 服务，请确认服务正在运行。",
+    "invalidCredentials": "用户名或密码错误。",
+    "invalidCredentialsAttempts": "用户名或密码错误，还可尝试{{attempts}}次。",
+    "authFailed": "登录已失效，请重新登录。"
   },
   "update": {
     "newVersion": "发现新版本 v{{version}}",
