@@ -4,6 +4,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
+import { useState, useRef, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { DEFAULT_SETTINGS, type AppSettings, type ProxyStatus } from "@/types";
 
@@ -28,7 +29,23 @@ export function SettingsEditor({
 }: SettingsEditorProps) {
   const { t } = useTranslation();
   const s = { ...DEFAULT_SETTINGS, ...settings };
-  const groupOptions = Array.from(new Set(["auto", ...groups, s.active_group || "auto"])).filter(Boolean);
+
+  // Local state for text inputs that should only save on blur
+  const [editUsername, setEditUsername] = useState(s.web_admin_username);
+  const [editPassword, setEditPassword] = useState(s.web_admin_password);
+  const usernameEditing = useRef(false);
+  const passwordEditing = useRef(false);
+
+  // Sync from props when not actively editing
+  useEffect(() => {
+    if (!usernameEditing.current) setEditUsername(s.web_admin_username);
+  }, [s.web_admin_username]);
+  useEffect(() => {
+    // Don't sync empty password (backend getter may clear it for security)
+    if (!passwordEditing.current && s.web_admin_password) {
+      setEditPassword(s.web_admin_password);
+    }
+  }, [s.web_admin_password]);
 
   return (
     <div className="space-y-6">
@@ -157,15 +174,30 @@ export function SettingsEditor({
             </div>
             <div className="space-y-2">
               <Label>{t("settings.webAdmin.username")}</Label>
-              <Input value={s.web_admin_username} onChange={(event) => onChange("web_admin_username", event.target.value)} />
+              <Input
+                value={editUsername}
+                onFocus={() => { usernameEditing.current = true; }}
+                onChange={(event) => setEditUsername(event.target.value)}
+                onBlur={() => {
+                  usernameEditing.current = false;
+                  onChange("web_admin_username", editUsername);
+                }}
+              />
             </div>
             <div className="space-y-2">
               <Label>{t("settings.webAdmin.password")}</Label>
               <Input
                 type="password"
-                value={s.web_admin_password}
+                value={editPassword}
                 placeholder={settings?.web_admin_password ? t("settings.webAdmin.configured") : ""}
-                onChange={(event) => onChange("web_admin_password", event.target.value)}
+                onFocus={() => { passwordEditing.current = true; }}
+                onChange={(event) => setEditPassword(event.target.value)}
+                onBlur={() => {
+                  passwordEditing.current = false;
+                  if (editPassword) {
+                    onChange("web_admin_password", editPassword);
+                  }
+                }}
               />
               <p className="text-xs text-muted-foreground">
                 {t("settings.webAdmin.singlePortDesc")}
