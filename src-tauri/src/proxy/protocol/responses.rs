@@ -201,6 +201,48 @@ pub fn responses_failed_response(response_id: &str, created_at: i64, message: &s
     })
 }
 
+pub fn responses_hosted_tool_types_for_chat_fallback(tools: &[Value]) -> Vec<String> {
+    let mut types: Vec<String> = Vec::new();
+    for tool in tools {
+        let typ = tool
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("<missing>");
+        if typ != "function" && !types.iter().any(|existing| existing == typ) {
+            types.push(typ.to_string());
+        }
+    }
+    types
+}
+
+pub fn responses_hosted_tools_degradation_prompt(tool_types: &[String]) -> Option<String> {
+    if tool_types.is_empty() {
+        return None;
+    }
+
+    Some(format!(
+        "当前请求包含 Responses 原生工具：{}。\n\
+API Switch 当前通过 Chat-compatible 上游转发，不能把这些 hosted tools 原样透传给该上游。\n\n\
+请不要声称已经调用或执行了 Responses 原生工具。\n\
+请根据任务目标，改用当前运行环境可用的本地方式完成任务，例如 PowerShell、curl、Python、浏览器、Playwright、HTTP API、本地命令、文件系统搜索、数据库查询、本地索引或其他可调用工具。\n\
+所有结果必须来自实际执行、实际读取或实际可验证的信息；不要编造搜索结果、文件内容、图片结果或工具执行结果。",
+        tool_types.join("、")
+    ))
+}
+
+fn inject_responses_tool_degradation_prompt(messages: &mut Vec<Value>, prompt: String) {
+    if let Some(first_system) = messages.iter_mut().find(|message| {
+        message.get("role").and_then(|role| role.as_str()) == Some("system")
+    }) {
+        if let Some(content) = first_system.get("content").and_then(|content| content.as_str()) {
+            first_system["content"] = json!(format!("{}\n\n{}", content, prompt));
+            return;
+        }
+    }
+
+    messages.insert(0, json!({ "role": "system", "content": prompt }));
+}
+
 pub fn responses_to_openai_chat_request(req_body: &Value) -> (Value, bool, String) {
     let is_stream = req_body
         .get("stream")
@@ -213,10 +255,17 @@ pub fn responses_to_openai_chat_request(req_body: &Value) -> (Value, bool, Strin
         .unwrap_or("auto")
         .to_string();
 
-    let messages = input_to_messages(
+    let mut messages = input_to_messages(
         req_body.get("input").unwrap_or(&Value::Null),
         req_body.get("instructions").and_then(|v| v.as_str()),
     );
+
+    if let Some(tools) = req_body.get("tools").and_then(|v| v.as_array()) {
+        let hosted_tool_types = responses_hosted_tool_types_for_chat_fallback(tools);
+        if let Some(prompt) = responses_hosted_tools_degradation_prompt(&hosted_tool_types) {
+            inject_responses_tool_degradation_prompt(&mut messages, prompt);
+        }
+    }
 
     let mut chat_body = json!({
         "model": model,
@@ -258,9 +307,14 @@ pub fn responses_to_openai_chat_request(req_body: &Value) -> (Value, bool, Strin
 
     if let (Some(req_obj), Some(chat_obj)) = (req_body.as_object(), chat_body.as_object_mut()) {
         for (key, value) in req_obj {
-            if !chat_obj.contains_key(key) {
-                chat_obj.insert(key.clone(), value.clone());
+            if chat_obj.contains_key(key) {
+                continue;
             }
+            // Skip fields already consumed by Responses→Chat conversion
+            if key == "input" || key == "instructions" {
+                continue;
+            }
+            chat_obj.insert(key.clone(), value.clone());
         }
     }
 
@@ -2033,19 +2087,20 @@ pub fn input_to_messages(input: &Value, instructions: Option<&str>) -> Vec<Value
 /// Responses API: `{ type: "function", name, description, parameters, strict }`
 /// Chat API:      `{ type: "function", function: { name, description, parameters, strict } }`
 ///
-/// 我们是纯翻译层 - 将 function tools 转为 Chat 格式，
-/// 并将所有其他工具类型（web_search、local_shell、image_generation 等）
-/// 原样透传。我们不做过滤或预拒绝；那是上游的决定，不是我们的。
-/// 无论上游返回什么（成功或错误），我们都原样转发给调用方。
+/// 临时策略：当前这条路径明确是 Responses → Chat 上游的降级路径，
+/// 暂不考虑原生 Responses 上游能力。为了避免把 `custom`、`web_search`、
+/// `file_search`、`image_generation` 等 Responses 专属工具盲透传到 Chat 上游，
+/// 这里仅保留可安全映射的 function tools；其他工具类型先跳过并记录警告。
+/// 后续 P0 架构改造会用中立 IR + Capability Router 重新决定哪些上游能承载这些工具。
 pub fn convert_tools(tools: &[Value]) -> Option<Value> {
     let converted: Vec<Value> = tools
         .iter()
-        .map(|t| {
+        .filter_map(|t| {
             let typ = t.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
             // 如果已经是 Chat 格式，直接透传
             if typ == "function" && t.get("function").is_some() {
-                return t.clone();
+                return Some(t.clone());
             }
 
             // 将 Responses 格式的 function tool 转为 Chat 格式，
@@ -2053,7 +2108,7 @@ pub fn convert_tools(tools: &[Value]) -> Option<Value> {
             if typ == "function" {
                 let mut tool = t.clone();
                 let Some(tool_obj) = tool.as_object_mut() else {
-                    return t.clone();
+                    return Some(t.clone());
                 };
 
                 let mut function = serde_json::Map::new();
@@ -2078,12 +2133,17 @@ pub fn convert_tools(tools: &[Value]) -> Option<Value> {
                 }
 
                 tool_obj.insert("function".to_string(), Value::Object(function));
-                return tool;
+                return Some(tool);
             }
 
-            // 非 function 工具（web_search、local_shell、image_generation 等）
-            // 直接透传。我们不做过滤 - 让上游决定。
-            t.clone()
+            // 临时止血：Chat Completions 上游通常不接受 Responses 专属工具类型。
+            // 继续透传会导致上游返回 `function is not set` 或 `Tools[N].Type invalid`。
+            // 当前先跳过，避免错误污染 failover；正式方案见 PLAN.md 的 P0 中立 IR 改造。
+            log::warn!(
+                "Responses 转 Chat 临时跳过不支持的工具类型: {}",
+                if typ.is_empty() { "<missing>" } else { typ }
+            );
+            None
         })
         .collect();
 

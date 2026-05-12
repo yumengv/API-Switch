@@ -343,7 +343,10 @@ pub async fn cancel_response(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proxy::protocol::responses::{convert_tools, passthrough_output_item};
+    use crate::proxy::protocol::responses::{
+        convert_tools, passthrough_output_item, responses_to_openai_chat_request,
+        responses_hosted_tool_types_for_chat_fallback, responses_hosted_tools_degradation_prompt,
+    };
 
     // ── Tool Type Tests ──
 
@@ -458,21 +461,16 @@ mod tests {
     }
 
     #[test]
-    fn test_convert_tools_non_function_passthrough() {
-        // Non-function types are passed through as-is (pure translation layer).
+    fn test_convert_tools_non_function_skipped_for_chat_fallback() {
+        // 临时策略：Responses → Chat 降级路径不再盲透传非 function 工具。
         let tools = vec![json!({ "type": "web_search", "search_context_size": "medium" })];
         let result = convert_tools(&tools);
-        assert!(result.is_some());
-        let arr = result.unwrap().as_array().unwrap().clone();
-        assert_eq!(arr.len(), 1);
-        // Passed through unchanged
-        assert_eq!(arr[0]["type"], "web_search");
-        assert_eq!(arr[0]["search_context_size"], "medium");
+        assert!(result.is_none());
     }
 
     #[test]
-    fn test_convert_tools_mixed_passthrough() {
-        // Function tools get converted, non-function tools pass through
+    fn test_convert_tools_mixed_skips_non_function_for_chat_fallback() {
+        // function tools 正常转换，非 function tools 暂时跳过，避免 Chat 上游 schema 错误。
         let tools = vec![
             json!({ "type": "function", "name": "my_fn", "parameters": { "type": "object" } }),
             json!({ "type": "web_search" }),
@@ -480,10 +478,66 @@ mod tests {
         ];
         let result = convert_tools(&tools);
         let arr = result.unwrap().as_array().unwrap().clone();
-        assert_eq!(arr.len(), 3);
-        assert_eq!(arr[0]["function"]["name"], "my_fn"); // converted
-        assert_eq!(arr[1]["type"], "web_search"); // passthrough
-        assert_eq!(arr[2]["type"], "local_shell"); // passthrough
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["function"]["name"], "my_fn");
+        assert!(arr[0].get("name").is_none());
+    }
+
+    #[test]
+    fn test_responses_hosted_tool_types_for_chat_fallback_dedupes_non_function_tools() {
+        let tools = vec![
+            json!({ "type": "function", "name": "my_fn" }),
+            json!({ "type": "web_search" }),
+            json!({ "type": "file_search" }),
+            json!({ "type": "web_search" }),
+        ];
+
+        let types = responses_hosted_tool_types_for_chat_fallback(&tools);
+        assert_eq!(types, vec!["web_search".to_string(), "file_search".to_string()]);
+    }
+
+    #[test]
+    fn test_responses_hosted_tools_degradation_prompt_points_to_local_methods() {
+        let prompt = responses_hosted_tools_degradation_prompt(&[
+            "web_search".to_string(),
+            "file_search".to_string(),
+        ])
+        .unwrap();
+
+        assert!(prompt.contains("web_search"));
+        assert!(prompt.contains("file_search"));
+        assert!(prompt.contains("PowerShell"));
+        assert!(prompt.contains("curl"));
+        assert!(prompt.contains("Python"));
+        assert!(prompt.contains("不要编造"));
+        assert!(!prompt.contains("切换到支持"));
+        assert!(!prompt.contains("粘贴文件内容"));
+    }
+
+    #[test]
+    fn test_responses_to_openai_chat_request_injects_hosted_tool_prompt() {
+        let req = json!({
+            "model": "auto",
+            "instructions": "保持简洁。",
+            "input": "搜索最新资料",
+            "tools": [
+                { "type": "web_search" },
+                { "type": "function", "name": "get_weather", "parameters": { "type": "object" } }
+            ]
+        });
+
+        let (chat_body, _, _) = responses_to_openai_chat_request(&req);
+        let messages = chat_body["messages"].as_array().unwrap();
+        assert_eq!(messages[0]["role"], "system");
+        let content = messages[0]["content"].as_str().unwrap();
+        assert!(content.contains("保持简洁。"));
+        assert!(content.contains("web_search"));
+        assert!(content.contains("当前运行环境可用的本地方式"));
+
+        let tools = chat_body["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["type"], "function");
+        assert_eq!(tools[0]["function"]["name"], "get_weather");
     }
 
     // ── Image URL Content Tests ──
