@@ -10,20 +10,19 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+# Local analysis / scratch outputs
 *.local
-
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
-.DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
+log_analysis*.txt
+responses_analysis.txt
+aider_leaderboard.txt
+bridge.log
+dev-output.log
+check_responses.py
+query_logs.py
+query_logs2.py
 
 # Personal planning & dev notes
+
 GENERIC_AGENT_FLOATING_AGENT_PLAN.md
 GENERIC_AGENT_IFRAME_PLAN.md
 GENERIC_AGENT_PRODUCT_DISCUSSION.md
@@ -54,12 +53,11 @@ src-tauri/.build-counter
 .playwright-mcp/
 playwright-report/
 test-results/
-tests/
-playwright.config.ts
 
 # Snapshots / temporary verification assets
 *-snapshot.md
 *-verified.png
+i18n_implementation_plan.md
 
 # Design assets (not for repo)
 design/
@@ -70,17 +68,23 @@ design/
 /icon4.png
 /icon5.png
 /star.jpg
-/logo/
 /ui-*.png
-四款程序ICON设计方案*
 doubao-color(*).svg
 xiaomi-*(*).svg
 zhipu-color(*).svg
 
+
 # Temp / tool dirs
 tmp/
+.tmp/
+.atomcode/
 .claude/
 .sisyphus/
+.codex_tmp/
+
+# Playwright e2e tests - local development only
+playwright.config.ts
+tests/
 
 # Other agents' build artifacts
 src-tauri/target-codex*/
