@@ -115,7 +115,7 @@ pub fn list_channels_paginated(
 }
 
 #[tauri::command]
-pub fn create_channel(
+pub async fn create_channel(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     params: CreateChannelParams,
