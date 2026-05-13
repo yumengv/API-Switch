@@ -1132,10 +1132,11 @@ impl ProtocolAdapter for ResponsesAdapter {
             }
 
             // ── 无 Chat SSE 对应的事件 ────────────────────────────────
-            "response.created" | "response.output_item.done" | "response.incomplete" | "response.failed" => None,
-
-            // ── 未知事件 → 跳过 ───────────────────────────────────────
-            _ => None,
+            //
+            // 按公理二（往返无损）和 ENABLE_UNKNOWN_FIELD_PASSTHROUGH 模式：
+            // 没有 Chat 对应的事件也原样透传，不丢失上游信息。
+            "response.created" | "response.output_item.done" | "response.incomplete" | "response.failed"
+                | _ => Some(data_line.to_string()),
         }
     }
 
