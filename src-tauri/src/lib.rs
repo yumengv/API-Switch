@@ -326,7 +326,7 @@ pub(crate) fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<taur
 
 use std::sync::OnceLock;
 
-const TRAY_DEBOUNCE_MS: u64 = 500;
+const TRAY_DEBOUNCE_MS: u64 = 1500;
 static LAST_TRAY_REFRESH: OnceLock<std::sync::Mutex<std::time::Instant>> = OnceLock::new();
 
 fn tray_debounce_check() -> bool {

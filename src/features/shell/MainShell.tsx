@@ -53,7 +53,7 @@ export function MainShell({
   const { t, i18n } = useTranslation();
 
   return (
-    <div className="flex h-screen flex-col bg-background">
+    <div className="flex h-screen flex-col bg-background overflow-y-scroll">
       {updateInfo && (
         <div className="flex shrink-0 items-center justify-center gap-2 bg-primary/10 px-3 py-1.5 text-xs text-primary">
           <span>{t('update.newVersion', { version: updateInfo.latest })}</span>
