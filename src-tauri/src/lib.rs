@@ -433,17 +433,15 @@ fn run_headless() {
         // 启动转发（app_handle = None）
         let settings_snapshot = settings.read().await.clone();
 
-        let admin_router = admin::build_combined_router(
-            &settings_snapshot,
-            AdminState {
-                db: db.clone(),
-                settings: settings.clone(),
-                login_sessions: Arc::new(RwLock::new(HashMap::new())),
-                login_failures: Arc::new(Mutex::new(HashMap::new())),
-                runtime: Some(app_state.clone()),
-                app_handle: None,
-            },
-        );
+        // 无头模式：强制启动 Web Admin（唯一管理入口），忽略 web_admin_enabled 配置
+        let admin_router = Some(admin::build_admin_router(AdminState {
+            db: db.clone(),
+            settings: settings.clone(),
+            login_sessions: Arc::new(RwLock::new(HashMap::new())),
+            login_failures: Arc::new(Mutex::new(HashMap::new())),
+            runtime: Some(app_state.clone()),
+            app_handle: None,
+        }));
 
         if settings_snapshot.proxy_enabled {
             let server = ProxyServer::new(
@@ -459,31 +457,6 @@ fn run_headless() {
                 let mut proxy_guard = app_state.proxy.write().await;
                 *proxy_guard = Some(server);
             }
-        }
-
-        // 无头模式下，如果 admin 是独立端口，单独启动 admin 服务
-        if settings_snapshot.web_admin_enabled
-            && settings_snapshot.web_admin_port != settings_snapshot.listen_port
-        {
-            let admin_router = admin::build_admin_router(AdminState {
-                db: app_state.db.clone(),
-                settings: app_state.settings.clone(),
-                login_sessions: Arc::new(RwLock::new(HashMap::new())),
-                login_failures: Arc::new(Mutex::new(HashMap::new())),
-                runtime: Some(app_state.clone()),
-                app_handle: None,
-            });
-            let admin_addr: std::net::SocketAddr = format!("127.0.0.1:{}", settings_snapshot.web_admin_port)
-                .parse()
-                .expect("Invalid admin port");
-            tokio::spawn(async move {
-                match tokio::net::TcpListener::bind(admin_addr).await {
-                    Ok(listener) => {
-                        axum::serve(listener, admin_router).await.ok();
-                    }
-                    Err(e) => log::error!("Failed to start Web Admin: {e}"),
-                }
-            });
         }
 
         let port = settings_snapshot.listen_port;
