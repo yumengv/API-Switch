@@ -120,8 +120,6 @@ impl AdminServer {
 
 pub fn should_start_admin(settings: &AppSettings) -> bool {
     settings.web_admin_enabled
-        && !settings.web_admin_username.trim().is_empty()
-        && !settings.web_admin_password.is_empty()
 }
 
 pub fn admin_mode(settings: &AppSettings) -> AdminMode {
