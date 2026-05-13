@@ -62,6 +62,28 @@ pub fn toggle_entry(
     id: &str,
     enabled: bool,
 ) -> Result<(), AppError> {
+    toggle_entry_inner(db, failure_counts, id, enabled)
+}
+
+/// Batch toggle entries — single IPC call to avoid N concurrent IPC calls.
+pub fn batch_toggle_entries(
+    db: &Database,
+    failure_counts: &std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<String, u32>>>,
+    ids: &[String],
+    enabled: bool,
+) -> Result<(), AppError> {
+    for id in ids {
+        toggle_entry_inner(db, failure_counts, id, enabled)?;
+    }
+    Ok(())
+}
+
+fn toggle_entry_inner(
+    db: &Database,
+    failure_counts: &std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<String, u32>>>,
+    id: &str,
+    enabled: bool,
+) -> Result<(), AppError> {
     db.toggle_entry(id, enabled)?;
     if enabled {
         let _ = db.set_entry_cooldown(id, None);

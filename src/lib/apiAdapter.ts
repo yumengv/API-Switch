@@ -24,6 +24,7 @@ export interface ApiAdapter {
     list(): Promise<ApiEntry[]>;
     listPaginated(params: { page: number; pageSize: number; groupName?: string; search?: string; channelId?: string }): Promise<PaginatedResult<ApiEntry>>;
     toggle(id: string, enabled: boolean): Promise<void>;
+    batchToggle(ids: string[], enabled: boolean): Promise<void>;
     reorder(orderedIds: string[]): Promise<void>;
     create(params: { channelId: string; model: string; displayName?: string; groupName?: string }): Promise<ApiEntry>;
     delete(id: string): Promise<void>;

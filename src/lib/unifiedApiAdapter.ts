@@ -311,6 +311,13 @@ export const apiAdapter: ApiAdapter = {
         ? tauriCmd<void>('toggle_entry', { id, enabled })
         : webRequest<void>('PUT', `/pool/${id}/toggle`, enabled),
 
+    batchToggle: (ids, enabled) =>
+      useTauri()
+        ? tauriCmd<void>('batch_toggle_entries', { ids, enabled })
+        : Promise.all(ids.map((id) =>
+            webRequest<void>('PUT', `/pool/${id}/toggle`, enabled)
+          )).then(() => {}),
+
     reorder: (orderedIds) =>
       useTauri()
         ? tauriCmd<void>('reorder_entries', { orderedIds })

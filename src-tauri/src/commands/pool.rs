@@ -91,6 +91,22 @@ pub fn toggle_entry(
     Ok(())
 }
 
+/// Batch toggle entries: single IPC call to toggle multiple entries.
+/// Prevents Tauri IPC storm when user shift+clicks to toggle all visible entries.
+#[tauri::command]
+pub fn batch_toggle_entries(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    ids: Vec<String>,
+    enabled: bool,
+) -> Result<(), AppError> {
+    pool_service::batch_toggle_entries(&state.db, &state.failure_counts, &ids, enabled)?;
+    let _ = app.emit("entries-changed", ());
+    crate::state_version::bump();
+    crate::refresh_tray_if_enabled(&app);
+    Ok(())
+}
+
 #[tauri::command]
 pub fn reorder_entries(
     app: tauri::AppHandle,

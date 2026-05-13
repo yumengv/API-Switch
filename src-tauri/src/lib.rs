@@ -225,6 +225,7 @@ Some(handle.clone()),
         commands::pool::list_entries,
         commands::pool::list_entries_paginated,
         commands::pool::toggle_entry,
+        commands::pool::batch_toggle_entries,
         commands::pool::reorder_entries,
         commands::pool::delete_entry,
         commands::pool::create_entry,
@@ -323,8 +324,27 @@ pub(crate) fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<taur
     Menu::with_items(app, &all)
 }
 
+use std::sync::OnceLock;
+
+const TRAY_DEBOUNCE_MS: u64 = 500;
+static LAST_TRAY_REFRESH: OnceLock<std::sync::Mutex<std::time::Instant>> = OnceLock::new();
+
+fn tray_debounce_check() -> bool {
+    let now = std::time::Instant::now();
+    let lock = LAST_TRAY_REFRESH.get_or_init(|| std::sync::Mutex::new(now));
+    let Ok(mut last) = lock.lock() else { return false };
+    if now.duration_since(*last).as_millis() < TRAY_DEBOUNCE_MS as u128 {
+        return false; // 防抖：500ms 内不重复重建
+    }
+    *last = now;
+    true
+}
+
 pub(crate) fn refresh_tray_if_enabled(app: &tauri::AppHandle) {
     if EXPERIMENTAL_LAZY_TRAY_REFRESH {
+        return;
+    }
+    if !tray_debounce_check() {
         return;
     }
     if let Ok(new_menu) = build_tray_menu(app) {

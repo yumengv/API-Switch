@@ -168,6 +168,7 @@ export const ChannelManager: React.FC = () => {
   const { t } = useTranslation();
   const api = useApiAdapter();
   const queryClient = useQueryClient();
+  const lastEntriesEvent = useRef(0);
   const {
     data: channelPages,
     fetchNextPage,
@@ -225,6 +226,10 @@ export const ChannelManager: React.FC = () => {
   });
 
   useEvent("entries-changed", () => {
+    // 300ms 防抖：避免 Tauri 事件风暴导致连续重渲染
+    const now = Date.now();
+    if (now - lastEntriesEvent.current < 300) return;
+    lastEntriesEvent.current = now;
     queryClient.invalidateQueries({ queryKey: ["channels", "paginated"] });
     queryClient.invalidateQueries({ queryKey: ["channels", "all"] });
     queryClient.invalidateQueries({ queryKey: ["entries"] });

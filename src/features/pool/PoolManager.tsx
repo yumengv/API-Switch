@@ -613,7 +613,12 @@ export function PoolManager() {
    });
 
    // Event-driven refresh: invalidate entries when the backend signals a change.
+   // 300ms 防抖：避免 Tauri 事件风暴导致连续重渲染
+   const lastEntriesEvent = useRef(0);
    useEvent("entries-changed", () => {
+     const now = Date.now();
+     if (now - lastEntriesEvent.current < 300) return;
+     lastEntriesEvent.current = now;
      queryClient.invalidateQueries({ queryKey: ["entries"] });
    });
 
@@ -686,8 +691,10 @@ const handleToggleIntent = useCallback(async (entry: ApiEntry, enabled: boolean,
       const hotKey = options.ctrlKey || options.metaKey;
       if (options.shiftKey) {
         const targetEntries = filteredEntries;
+        const targetIds = targetEntries.map((e) => e.id);
         const currentIds = localOrder ? localOrder : displayEntries.map((e) => e.id);
-        await Promise.all(targetEntries.map((e) => adapter.pool.toggle(e.id, enabled)));
+        // Use batch IPC to avoid N concurrent invoke calls in Tauri
+        await adapter.pool.batchToggle(targetIds, enabled);
         setLocalOrder(currentIds);
         requestAnimationFrame(() => queryClient.invalidateQueries({ queryKey: ["entries"] }));
         return;
