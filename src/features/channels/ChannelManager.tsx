@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { Edit, Plus, RefreshCw, Save, Trash2, Power, PowerOff, XCircle, FileText } from 'lucide-react';
 import { Button } from '@/components/ui/button';

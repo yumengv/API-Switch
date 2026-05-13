@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState, useEffect, useRef } from "react";
+import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Plus, Trash2, Copy, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import { useApiAdapter } from "@/lib/useApiAdapter";
 import { toast } from "sonner";
-import type { AccessKey } from "@/types";
+import type { AccessKey, PaginatedResult } from "@/types";
 
 export function TokenPage() {
   const { t } = useTranslation();
@@ -28,10 +28,33 @@ export function TokenPage() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AccessKey | null>(null);
 
-  const { data: keys, isLoading } = useQuery({
+  const {
+    data: keysPages,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    isLoading,
+  } = useInfiniteQuery({
     queryKey: ["accessKeys"],
-    queryFn: () => api.tokens.list(),
+    queryFn: ({ pageParam = 1 }) =>
+      api.tokens.listPaginated({ page: pageParam, pageSize: 20 }) as Promise<PaginatedResult<AccessKey>>,
+    getNextPageParam: (lastPage) =>
+      lastPage.items.length >= 20 ? lastPage.page + 1 : undefined,
+    initialPageParam: 1,
   });
+  const keys = keysPages?.pages.flatMap(p => p.items) ?? [];
+
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || !hasNextPage || isFetchingNextPage) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) fetchNextPage(); },
+      { rootMargin: "200px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   const createMutation = useMutation({
     mutationFn: (name: string) => api.tokens.create(name),
@@ -149,6 +172,10 @@ export function TokenPage() {
               ))}
             </tbody>
           </table>
+          <div ref={sentinelRef} className="h-4" />
+          {isFetchingNextPage && (
+            <div className="flex justify-center py-4 text-sm text-muted-foreground">Loading...</div>
+          )}
         </div>
       ) : (
         <div className="flex h-64 items-center justify-center text-muted-foreground">

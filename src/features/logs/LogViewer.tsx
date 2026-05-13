@@ -1,5 +1,5 @@
-import { useState, Fragment } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useState, Fragment, useEffect, useRef } from "react";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Card, CardContent } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
@@ -46,17 +46,43 @@ function formatAttemptPath(meta: UsageLogMeta | null): string[] {
 export function LogViewer() {
   const { t } = useTranslation();
   const adapter = useApiAdapter();
-  const [filter, setFilter] = useState<UsageLogFilter>({ page: 1, page_size: 100 });
+  const [filter, setFilter] = useState<UsageLogFilter>({ page_size: 100 });
   const [errorsOnly, setErrorsOnly] = useState(false);
   const [expandedId, setExpandedId] = useState<number | null>(null);
 
-  const { data: result, isLoading } = useQuery({
-    queryKey: ["usageLogs", filter],
-    queryFn: () => adapter.usage.getLogs(filter),
-    refetchInterval: POLL_INTERVAL_MS,
+  const {
+    data: pages,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    isLoading,
+  } = useInfiniteQuery({
+    queryKey: ["usageLogs", errorsOnly],
+    queryFn: ({ pageParam = 1 }) =>
+      adapter.usage.getLogs({
+        ...filter,
+        page: pageParam,
+        success: errorsOnly ? true : undefined,
+      }),
+    getNextPageParam: (lastPage) =>
+      lastPage.items.length >= 100 ? lastPage.page + 1 : undefined,
+    initialPageParam: 1,
+    refetchInterval: 5_000,
   });
 
-  const logs: UsageLog[] = result?.items || [];
+  const logs: UsageLog[] = pages?.pages.flatMap((p) => p.items) ?? [];
+
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || !hasNextPage || isFetchingNextPage) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) fetchNextPage(); },
+      { rootMargin: "200px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
   const totalPrompt = logs.reduce((sum, log) => sum + log.prompt_tokens, 0);
   const totalCompletion = logs.reduce((sum, log) => sum + log.completion_tokens, 0);
   const successCount = logs.filter((log) => log.success).length;
@@ -241,6 +267,10 @@ export function LogViewer() {
             })}
           </tbody>
         </table>
+        <div ref={sentinelRef} className="h-4" />
+        {isFetchingNextPage && (
+          <div className="flex justify-center py-4 text-sm text-muted-foreground">Loading...</div>
+        )}
       </div>
 
       {!logs.length && !isLoading && (
