@@ -89,3 +89,9 @@ tests/
 # Other agents' build artifacts
 src-tauri/target-codex*/
 
+# VSCode settings
+.vscode/settings.json
+
+# Agent-specific
+HEADLESS.md
+
