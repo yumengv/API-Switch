@@ -339,7 +339,7 @@ struct ForwardResult {
 struct StreamLogGuard {
     logged: Arc<AtomicBool>,
     db: Arc<Database>,
-    app_handle: tauri::AppHandle,
+    app_handle: Option<tauri::AppHandle>,
     access_key: Option<AccessKey>,
     entry: ApiEntry,
     requested_model: String,
@@ -1459,8 +1459,8 @@ fn append_and_parse_sse(
     Some(Bytes::from(output))
 }
 
-fn refresh_tray(app_handle: &tauri::AppHandle) {
-    refresh_tray_if_enabled(app_handle);
+fn refresh_tray(app_handle: &Option<tauri::AppHandle>) {
+    if let Some(h) = app_handle { refresh_tray_if_enabled(h); }
 }
 
 fn status_matches_rule(rule: &str, status: u16) -> bool {
@@ -1494,7 +1494,7 @@ async fn disable_entry(state: &ProxyState, entry: &ApiEntry) {
 
     let _ = state.db.toggle_entry(&entry.id, false);
     let _ = state.db.set_entry_cooldown(&entry.id, Some(cooldown_until));
-    let _ = state.app_handle.emit("entries-changed", ());
+    if let Some(h) = &state.app_handle { let _ = h.emit("entries-changed", ()); }
     refresh_tray(&state.app_handle);
 
     let mut breakers = state.circuit_breakers.write().await;
@@ -1503,7 +1503,7 @@ async fn disable_entry(state: &ProxyState, entry: &ApiEntry) {
 
 async fn record_circuit_success(state: &ProxyState, entry_id: &str) {
     let _ = state.db.set_entry_cooldown(entry_id, None);
-    let _ = state.app_handle.emit("entries-changed", ());
+    if let Some(h) = &state.app_handle { let _ = h.emit("entries-changed", ()); }
     refresh_tray(&state.app_handle);
 
     // Clear failure count
@@ -1536,7 +1536,7 @@ async fn cool_down_entry(state: &ProxyState, entry: &ApiEntry) {
         let six_hours_later = chrono::Utc::now().timestamp() + 21600;
         let _ = state.db.set_entry_cooldown(&entry.id, Some(six_hours_later));
         let _ = state.db.toggle_entry(&entry.id, false);
-        let _ = state.app_handle.emit("entries-changed", ());
+        if let Some(h) = &state.app_handle { let _ = h.emit("entries-changed", ()); }
         refresh_tray(&state.app_handle);
 
         let mut breakers = state.circuit_breakers.write().await;
@@ -1552,7 +1552,7 @@ async fn cool_down_entry(state: &ProxyState, entry: &ApiEntry) {
 
     let cooldown_until = chrono::Utc::now().timestamp() + recovery_secs as i64;
     let _ = state.db.set_entry_cooldown(&entry.id, Some(cooldown_until));
-    let _ = state.app_handle.emit("entries-changed", ());
+    if let Some(h) = &state.app_handle { let _ = h.emit("entries-changed", ()); }
     refresh_tray(&state.app_handle);
 
     let mut breakers = state.circuit_breakers.write().await;
@@ -1578,14 +1578,14 @@ fn spawn_record_circuit_success(
     failure_counts: Arc<tokio::sync::RwLock<std::collections::HashMap<String, u32>>>,
     settings: Arc<tokio::sync::RwLock<AppSettings>>,
     db: Arc<Database>,
-    app_handle: tauri::AppHandle,
+    app_handle: Option<tauri::AppHandle>,
     entry_id: String,
 ) {
     tokio::spawn(async move {
         let recovery_secs = settings.read().await.circuit_recovery_secs as u64;
 
         let _ = db.set_entry_cooldown(&entry_id, None);
-        let _ = app_handle.emit("entries-changed", ());
+        if let Some(h) = &app_handle { let _ = h.emit("entries-changed", ()); }
         refresh_tray(&app_handle);
 
         // Clear failure count
@@ -1605,7 +1605,7 @@ fn spawn_cool_down_entry(
     failure_counts: Arc<tokio::sync::RwLock<std::collections::HashMap<String, u32>>>,
     settings: Arc<tokio::sync::RwLock<AppSettings>>,
     db: Arc<Database>,
-    app_handle: tauri::AppHandle,
+    app_handle: Option<tauri::AppHandle>,
     entry_id: String,
 ) {
     tokio::spawn(async move {
@@ -1626,7 +1626,7 @@ fn spawn_cool_down_entry(
             let six_hours_later = chrono::Utc::now().timestamp() + 21600;
             let _ = db.set_entry_cooldown(&entry_id, Some(six_hours_later));
             let _ = db.toggle_entry(&entry_id, false);
-            let _ = app_handle.emit("entries-changed", ());
+            if let Some(h) = &app_handle { let _ = h.emit("entries-changed", ()); }
             refresh_tray(&app_handle);
 
             let mut breakers = circuit_breakers.write().await;
@@ -1642,7 +1642,7 @@ fn spawn_cool_down_entry(
 
         let cooldown_until = chrono::Utc::now().timestamp() + recovery_secs as i64;
         let _ = db.set_entry_cooldown(&entry_id, Some(cooldown_until));
-        let _ = app_handle.emit("entries-changed", ());
+        if let Some(h) = &app_handle { let _ = h.emit("entries-changed", ()); }
         refresh_tray(&app_handle);
 
         let mut breakers = circuit_breakers.write().await;
@@ -1664,7 +1664,7 @@ fn spawn_cool_down_entry(
 
 fn log_usage(
     db: &Database,
-    app_handle: &tauri::AppHandle,
+    app_handle: &Option<tauri::AppHandle>,
     access_key: Option<&AccessKey>,
     entry: &ApiEntry,
     requested_model: &str,
@@ -1721,7 +1721,7 @@ fn log_usage(
         None,
     );
 
-    let _ = app_handle.emit("new-usage-log", ());
+    if let Some(h) = app_handle { let _ = h.emit("new-usage-log", ()); }
 }
 
 #[cfg(test)]

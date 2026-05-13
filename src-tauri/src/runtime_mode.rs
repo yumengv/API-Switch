@@ -14,10 +14,10 @@ pub enum ModeSource {
 }
 
 pub fn detect_runtime_mode() -> (RuntimeMode, ModeSource) {
-    // 1. Check CLI args: --headless or --standalone
+    // 1. Check CLI args: --headless, --nodisktop or --standalone
     let args: Vec<String> = std::env::args().collect();
     for arg in &args {
-        if arg == "--headless" || arg == "--standalone" {
+        if arg == "--headless" || arg == "--nodisktop" || arg == "--standalone" {
             return (RuntimeMode::Standalone, ModeSource::Cli);
         }
     }

@@ -9,11 +9,13 @@ mod services;
 use admin::AdminServer;
 use database::{AppSettings, Database};
 use proxy::ProxyServer;
-use runtime_mode::RuntimeMode;
+use runtime_mode::{ModeSource, RuntimeMode};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::{Emitter, Manager};
+use tokio::sync::Mutex;
 
 pub use error::AppError;
 
@@ -54,6 +56,12 @@ pub fn run() {
         mode_source
     );
 
+    // 无桌面环境 → headless 模式（只启动转发+Web，不走 Tauri GUI）
+    if should_run_headless(runtime_mode, mode_source) {
+        run_headless();
+        return;
+    }
+
     let _app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
@@ -93,7 +101,7 @@ pub fn run() {
                         port,
                         app_state.db.clone(),
                         app_state.settings.clone(),
-                        handle.clone(),
+Some(handle.clone()),
                         app_state.failure_counts.clone(),
                     );
                     if let Err(e) = server.start_with_admin(admin_router).await {
@@ -369,4 +377,133 @@ fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
             }
         }
     }
+}
+
+/// 检测是否进入 headless 模式
+fn should_run_headless(mode: RuntimeMode, source: ModeSource) -> bool {
+    match source {
+        // 用户明确指定了 --headless/--nodisktop 或 API_SWITCH_HEADLESS=1
+        ModeSource::Cli | ModeSource::Env => mode == RuntimeMode::Standalone,
+        // 没指定参数，自动检测桌面环境
+        ModeSource::Auto => !has_desktop(),
+    }
+}
+
+/// 桌面环境检测（仅 Linux 需要检查，Win/Mac 默认有桌面）
+fn has_desktop() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        std::env::var("DISPLAY").is_ok() || std::env::var("WAYLAND_DISPLAY").is_ok()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        true
+    }
+}
+
+/// 无头模式入口：只启动转发+Web，不走 Tauri GUI
+fn run_headless() {
+    use admin::AdminState;
+    use tokio::sync::RwLock;
+
+    let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+
+    rt.block_on(async {
+        // DB 初始化
+        let db = Database::open().expect("Failed to open database");
+        db.create_tables().expect("Failed to create tables");
+        let mut settings = db.get_settings().unwrap_or_default();
+        admin::apply_admin_env(&mut settings);
+        db.update_settings(&settings).ok();
+
+        let settings = Arc::new(RwLock::new(settings));
+        let db = Arc::new(db);
+
+        // AppState（不需要 Tauri）
+        let app_state = AppState {
+            db: db.clone(),
+            settings: settings.clone(),
+            proxy: Arc::new(RwLock::new(None)),
+            admin: Arc::new(RwLock::new(None)),
+            translation_relay: Arc::new(RwLock::new(None)),
+            failure_counts: Arc::new(RwLock::new(HashMap::new())),
+            runtime_mode: RuntimeMode::Standalone,
+        };
+
+        // 启动转发（app_handle = None）
+        let settings_snapshot = settings.read().await.clone();
+
+        let admin_router = admin::build_combined_router(
+            &settings_snapshot,
+            AdminState {
+                db: db.clone(),
+                settings: settings.clone(),
+                login_sessions: Arc::new(RwLock::new(HashMap::new())),
+                login_failures: Arc::new(Mutex::new(HashMap::new())),
+                runtime: Some(app_state.clone()),
+                app_handle: None,
+            },
+        );
+
+        if settings_snapshot.proxy_enabled {
+            let server = ProxyServer::new(
+                settings_snapshot.listen_port,
+                db,
+                settings,
+                None,
+                app_state.failure_counts.clone(),
+            );
+            if let Err(e) = server.start_with_admin(admin_router).await {
+                log::error!("Failed to start proxy: {e}");
+            } else {
+                let mut proxy_guard = app_state.proxy.write().await;
+                *proxy_guard = Some(server);
+            }
+        }
+
+        // 无头模式下，如果 admin 是独立端口，单独启动 admin 服务
+        if settings_snapshot.web_admin_enabled
+            && settings_snapshot.web_admin_port != settings_snapshot.listen_port
+        {
+            let admin_router = admin::build_admin_router(AdminState {
+                db: app_state.db.clone(),
+                settings: app_state.settings.clone(),
+                login_sessions: Arc::new(RwLock::new(HashMap::new())),
+                login_failures: Arc::new(Mutex::new(HashMap::new())),
+                runtime: Some(app_state.clone()),
+                app_handle: None,
+            });
+            let admin_addr: std::net::SocketAddr = format!("127.0.0.1:{}", settings_snapshot.web_admin_port)
+                .parse()
+                .expect("Invalid admin port");
+            tokio::spawn(async move {
+                match tokio::net::TcpListener::bind(admin_addr).await {
+                    Ok(listener) => {
+                        axum::serve(listener, admin_router).await.ok();
+                    }
+                    Err(e) => log::error!("Failed to start Web Admin: {e}"),
+                }
+            });
+        }
+
+        let port = settings_snapshot.listen_port;
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        println!("  API Switch is running");
+        println!("  Proxy:      http://127.0.0.1:{}/v1/...", port);
+        println!("  Web Admin:  http://127.0.0.1:{}", port);
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        println!("  Press Ctrl+C to stop");
+
+        // 等待 Ctrl+C
+        tokio::signal::ctrl_c().await.expect("Failed to listen for ctrl+c");
+        println!("\nShutting down...");
+
+        // 优雅停止代理
+        {
+            let mut proxy_guard = app_state.proxy.write().await;
+            if let Some(server) = proxy_guard.take() {
+                let _ = server.stop().await;
+            }
+        }
+    });
 }

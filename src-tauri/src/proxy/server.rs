@@ -27,7 +27,7 @@ pub struct ProxyState {
     pub settings: Arc<RwLock<AppSettings>>,
     pub circuit_breakers: Arc<RwLock<HashMap<String, CircuitBreaker>>>,
     pub failure_counts: Arc<RwLock<HashMap<String, u32>>>, // Entry ID -> consecutive failure count
-    pub app_handle: tauri::AppHandle,
+    pub app_handle: Option<tauri::AppHandle>,
     pub http_client: reqwest::Client,
     pub response_store: Arc<RwLock<HashMap<String, serde_json::Value>>>,
 }
@@ -51,7 +51,7 @@ impl ProxyServer {
         port: i32,
         db: Arc<Database>,
         settings: Arc<RwLock<AppSettings>>,
-        app_handle: tauri::AppHandle,
+        app_handle: Option<tauri::AppHandle>,
         failure_counts: Arc<RwLock<HashMap<String, u32>>>,
     ) -> Self {
         let connect_timeout_secs = settings
