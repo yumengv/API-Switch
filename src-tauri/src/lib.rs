@@ -431,17 +431,24 @@ fn run_headless() {
         };
 
         // 启动转发（app_handle = None）
+        // 无头模式：强制开启 Web Admin，不管配置里是 0 还是 1
+        {
+            let mut w = settings.write().await;
+            w.web_admin_enabled = true;
+        }
         let settings_snapshot = settings.read().await.clone();
 
-        // 无头模式：强制启动 Web Admin（唯一管理入口），忽略 web_admin_enabled 配置
-        let admin_router = Some(admin::build_admin_router(AdminState {
-            db: db.clone(),
-            settings: settings.clone(),
-            login_sessions: Arc::new(RwLock::new(HashMap::new())),
-            login_failures: Arc::new(Mutex::new(HashMap::new())),
-            runtime: Some(app_state.clone()),
-            app_handle: None,
-        }));
+        let admin_router = admin::build_combined_router(
+            &settings_snapshot,
+            AdminState {
+                db: db.clone(),
+                settings: settings.clone(),
+                login_sessions: Arc::new(RwLock::new(HashMap::new())),
+                login_failures: Arc::new(Mutex::new(HashMap::new())),
+                runtime: Some(app_state.clone()),
+                app_handle: None,
+            },
+        );
 
         if settings_snapshot.proxy_enabled {
             let server = ProxyServer::new(
