@@ -145,7 +145,7 @@ impl Database {
         let conn = lock_conn!(self.conn);
 
         let page = filter.page.unwrap_or(1).max(1);
-        let page_size = filter.page_size.unwrap_or(50).min(200);
+        let page_size = filter.page_size.unwrap_or(50).max(1).min(200);
 
         let mut where_clauses = Vec::new();
         let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -197,7 +197,7 @@ impl Database {
         })?;
 
         // Query
-        let offset = (page - 1) * page_size;
+        let offset = i64::from(page.saturating_sub(1)) * i64::from(page_size);
         let query_sql = format!(
             "SELECT id, type, content, access_key_id, access_key_name, token_name, api_entry_id, channel_id, channel_name,
                     model, requested_model, quota, is_stream, prompt_tokens, completion_tokens,
@@ -206,7 +206,7 @@ impl Database {
             params.len() + 1,
             params.len() + 2
         );
-        params.push(Box::new(page_size));
+        params.push(Box::new(i64::from(page_size)));
         params.push(Box::new(offset));
 
         let mut stmt = conn.prepare(&query_sql)?;

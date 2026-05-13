@@ -62,10 +62,10 @@ export function LogViewer() {
       adapter.usage.getLogs({
         ...filter,
         page: pageParam,
-        success: errorsOnly ? true : undefined,
+        success: errorsOnly ? false : undefined,
       }),
     getNextPageParam: (lastPage) =>
-      lastPage.items.length >= 100 ? lastPage.page + 1 : undefined,
+      lastPage.page * lastPage.page_size < lastPage.total ? lastPage.page + 1 : undefined,
     initialPageParam: 1,
     refetchInterval: 5_000,
   });

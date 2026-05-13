@@ -155,7 +155,7 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let page = page.max(1);
         let page_size = page_size.max(1).min(100);
-        let offset = (page - 1) * page_size;
+        let offset = i64::from(page.saturating_sub(1)) * i64::from(page_size);
 
         let mut where_clauses = Vec::new();
         let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -185,7 +185,7 @@ impl Database {
             params.len() + 1,
             params.len() + 2
         );
-        params.push(Box::new(page_size));
+        params.push(Box::new(i64::from(page_size)));
         params.push(Box::new(offset));
 
         let mut stmt = conn.prepare(&query_sql)?;

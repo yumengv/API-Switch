@@ -551,7 +551,7 @@ export function PoolManager() {
         groupName: groupFilter !== "all" ? groupFilter : undefined,
       }) as Promise<PaginatedResult<ApiEntry>>,
     getNextPageParam: (lastPage) =>
-      lastPage.items.length >= 20 ? lastPage.page + 1 : undefined,
+      lastPage.page * lastPage.page_size < lastPage.total ? lastPage.page + 1 : undefined,
     initialPageParam: 1,
     refetchInterval: 30_000,
     staleTime: 30_000,
@@ -669,21 +669,19 @@ export function PoolManager() {
     updateGroupMutation.mutate({ id: entry.id, groupName: group.trim() || "auto" });
   }, [updateGroupMutation]);
 
-   const handleToggleIntent = useCallback(async (entry: ApiEntry, enabled: boolean, options: { ctrlKey: boolean; shiftKey: boolean; metaKey: boolean }) => {
-     const hotKey = options.ctrlKey || options.metaKey;
-     if (options.shiftKey) {
-       const targetEntries = filteredEntries;
-       const currentIds = localOrder ? localOrder : displayEntries.map((e) => e.id);
-       await Promise.all(targetEntries.map((e) => adapter.pool.toggle(e.id, enabled)));
-       queryClient.setQueryData<ApiEntry[] | undefined>(["entries"], (prev) => prev?.map((e) => (targetEntries.some((t) => t.id === e.id) ? { ...e, enabled } : e)));
-       setLocalOrder(currentIds);
-       requestAnimationFrame(() => queryClient.invalidateQueries({ queryKey: ["entries"] }));
-       return;
-     }
+const handleToggleIntent = useCallback(async (entry: ApiEntry, enabled: boolean, options: { ctrlKey: boolean; shiftKey: boolean; metaKey: boolean }) => {
+      const hotKey = options.ctrlKey || options.metaKey;
+      if (options.shiftKey) {
+        const targetEntries = filteredEntries;
+        const currentIds = localOrder ? localOrder : displayEntries.map((e) => e.id);
+        await Promise.all(targetEntries.map((e) => adapter.pool.toggle(e.id, enabled)));
+        setLocalOrder(currentIds);
+        requestAnimationFrame(() => queryClient.invalidateQueries({ queryKey: ["entries"] }));
+        return;
+      }
 
-     await adapter.pool.toggle(entry.id, enabled);
-     queryClient.setQueryData<ApiEntry[] | undefined>(["entries"], (prev) => prev?.map((e) => (e.id === entry.id ? { ...e, enabled } : e)));
-     if (enabled && hotKey) {
+      await adapter.pool.toggle(entry.id, enabled);
+      if (enabled && hotKey) {
        // Move enabled entry to top of order when using hotkey (Ctrl/Cmd)
        const currentOrder = localOrder ? [...localOrder] : displayEntries.map((e) => e.id);
        const newOrder = [entry.id, ...currentOrder.filter((id) => id !== entry.id)];
@@ -741,8 +739,7 @@ export function PoolManager() {
             results[entry.id] = result.latency_ms.toString();
           } else {
             results[entry.id] = "X";
-            await adapter.pool.toggle(entry.id, false);
-            queryClient.setQueryData<ApiEntry[] | undefined>(["entries"], (prev) => prev?.map((e) => (e.id === entry.id ? { ...e, enabled: false } : e)));
+            await adapter.pool.toggle(entry.id, false); // invalidate below handles refresh for paginated query keys.
           }
         } catch {
           results[entry.id] = "X";
