@@ -59,6 +59,10 @@ test-results/
 *-verified.png
 i18n_implementation_plan.md
 
+# Sensitive local files
+key.txt
+*.key
+
 # Reference docs
 azure_openai_reference.html
 azure_openai_reference.md
