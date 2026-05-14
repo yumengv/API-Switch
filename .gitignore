@@ -22,6 +22,8 @@ query_logs.py
 query_logs2.py
 
 # Personal planning & dev notes
+AGENTS.md
+PROTOCOL_ENVELOPE_DESIGN.md
 
 GENERIC_AGENT_FLOATING_AGENT_PLAN.md
 GENERIC_AGENT_IFRAME_PLAN.md
