@@ -424,9 +424,24 @@ export const apiAdapter: ApiAdapter = {
       if (useTauri()) {
         await tauriCmd<void>('update_settings', { settings });
       } else {
-        const latest = await webRequest<{ data: AppSettings; _version: number }>('GET', '/settings');
-        lastSettingsVersion = latest._version;
-        await webRequest<void>('PUT', '/settings', { data: settings, _version: lastSettingsVersion });
+        // Web：PUT 前先获取最新版本号；版本冲突时自动重试（最多 3 次）
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const latest = await webRequest<{ data: AppSettings; _version: number }>('GET', '/settings');
+          try {
+            // PUT 返回 RestartResponse { _version, ... }
+            const result = await webRequest<{ _version: number }>('PUT', '/settings', {
+              data: settings,
+              _version: latest._version,
+            });
+            lastSettingsVersion = result._version; // PUT 成功后更新版本号
+            return;
+          } catch (err: unknown) {
+            const httpErr = err as ChannelOperationHttpError;
+            // 版本冲突（HTTP 409）：重试获取最新版本
+            if (httpErr?.status === 409 && attempt < 2) continue;
+            throw err; // 其他错误或重试耗尽则抛出
+          }
+        }
       }
     },
 

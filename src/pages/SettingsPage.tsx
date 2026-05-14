@@ -32,6 +32,9 @@ export function SettingsPage() {
       queryClient.invalidateQueries({ queryKey: ["pool-groups"] });
       queryClient.invalidateQueries({ queryKey: ["adminStatus"] });
     },
+    onError: (err) => {
+      toast.error(`设置保存失败: ${err}`, { duration: Infinity });
+    },
   });
 
   const s = { ...DEFAULT_SETTINGS, ...settings };

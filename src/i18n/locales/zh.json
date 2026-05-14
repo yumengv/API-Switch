@@ -427,6 +427,7 @@
       "username": "用户名",
       "password": "密码",
       "configured": "已配置",
+      "passwordPlaceholder": "已配置（留空则不修改）",
       "singlePortDesc": "使用与代理相同的端口为单端口模式；保持 9099 则使用独立管理端口。",
       "address": "访问地址"
     },

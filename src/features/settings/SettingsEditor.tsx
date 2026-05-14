@@ -226,7 +226,7 @@ export function SettingsEditor({
               <Input
                 type="password"
                 value={editPassword}
-                placeholder={settings?.web_admin_password ? t("settings.webAdmin.configured") : ""}
+                placeholder={t("settings.webAdmin.passwordPlaceholder")}
                 onFocus={() => { passwordEditing.current = true; }}
                 onChange={(event) => setEditPassword(event.target.value)}
                 onBlur={() => {
@@ -270,18 +270,22 @@ export function SettingsEditor({
                 </div>
                 <Switch checked={s.show_conversation_model} onCheckedChange={(value) => onChange("show_conversation_model", value)} />
               </div>
-              {!isWeb && (
-            <>
               <div className="flex items-center justify-between">
                 <Label>{t("settings.tray.autostart")}</Label>
-                <Switch checked={s.autostart} onCheckedChange={(value) => onChange("autostart", value)} />
+                {isWeb ? (
+                  <span className="text-sm text-muted-foreground">{s.autostart ? t("common.enabled") : t("common.disabled")}</span>
+                ) : (
+                  <Switch checked={s.autostart} onCheckedChange={(value) => onChange("autostart", value)} />
+                )}
               </div>
               <div className="flex items-center justify-between">
                 <Label>{t("settings.tray.startMinimized")}</Label>
-                <Switch checked={s.start_minimized} onCheckedChange={(value) => onChange("start_minimized", value)} />
+                {isWeb ? (
+                  <span className="text-sm text-muted-foreground">{s.start_minimized ? t("common.enabled") : t("common.disabled")}</span>
+                ) : (
+                  <Switch checked={s.start_minimized} onCheckedChange={(value) => onChange("start_minimized", value)} />
+                )}
               </div>
-            </>
-          )}
           {appVersion && (
             <div className="flex items-center justify-between pt-2 border-t">
               <Label className="text-muted-foreground">{t("settings.general.currentVersion")}</Label>
