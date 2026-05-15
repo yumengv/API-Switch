@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -37,7 +37,6 @@ function formatCompactNumber(value: number): string {
   const abs = Math.abs(value);
   const units = [
     { value: 1_000_000_000_000, suffix: "T" },
-    { value: 1_000_000_000, suffix: "B" },
     { value: 1_000_000, suffix: "M" },
     { value: 1_000, suffix: "K" },
   ];
@@ -45,16 +44,11 @@ function formatCompactNumber(value: number): string {
   for (const unit of units) {
     if (abs >= unit.value) {
       const scaled = value / unit.value;
-      const digits = Math.abs(scaled) >= 10 ? 0 : 1;
-      return `${scaled.toFixed(digits).replace(/\.0$/, "")}${unit.suffix}`;
+      return `${scaled.toFixed(1)}${unit.suffix}`;
     }
   }
 
-  return String(value);
-}
-
-function formatFullNumber(value: number): string {
-  return new Intl.NumberFormat().format(value);
+  return value.toFixed(1);
 }
 
 function buildSeriesData(
@@ -114,30 +108,53 @@ export function DashboardPage() {
   const { t } = useTranslation();
   const api = useApiAdapter();
   const [filter, setFilter] = useState<DashboardFilter>({ granularity: "hour" });
+  const [distributionMode, setDistributionMode] = useState<"count" | "tokens">("count");
+  const [manualGranularity, setManualGranularity] = useState<"hour" | "day" | null>(null);
+
+  // 根据时间跨度自动计算 granularity
+  const autoGranularity = useMemo<"hour" | "day">(() => {
+    // 没有时间范围 = "查全部数据"，默认 day
+    if (filter.start_time === undefined && filter.end_time === undefined) {
+      return "day";
+    }
+    const now = Date.now() / 1000;
+    const start = filter.start_time ?? now;
+    const end = filter.end_time ?? now;
+    const spanDays = (end - start) / 86400;
+    return spanDays > 7 ? "day" : "hour";
+  }, [filter.start_time, filter.end_time]);
+
+  // 用户手动选择优先，否则自动
+  const effectiveGranularity = manualGranularity ?? autoGranularity;
+
+  const effectiveFilter = useMemo(() => ({
+    ...filter,
+    granularity: effectiveGranularity,
+  }), [filter, effectiveGranularity]);
 
   const { data: stats } = useQuery({
-    queryKey: ["dashboardStats", filter],
-    queryFn: () => api.usage.getDashboardStats(filter),
+    queryKey: ["dashboardStats", effectiveFilter],
+    queryFn: () => api.usage.getDashboardStats(effectiveFilter),
   });
 
   const { data: consumption } = useQuery({
-    queryKey: ["modelConsumption", filter],
-    queryFn: () => api.usage.getModelConsumption(filter),
+    queryKey: ["modelConsumption", effectiveFilter],
+    queryFn: () => api.usage.getModelConsumption(effectiveFilter),
   });
 
   const { data: callTrend } = useQuery({
-    queryKey: ["callTrend", filter],
-    queryFn: () => api.usage.getCallTrend(filter),
+    queryKey: ["callTrend", effectiveFilter],
+    queryFn: () => api.usage.getCallTrend(effectiveFilter),
   });
 
   const { data: distribution } = useQuery({
-    queryKey: ["modelDistribution", filter],
-    queryFn: () => api.usage.getModelDistribution(filter),
+    queryKey: ["modelDistribution", effectiveFilter],
+    queryFn: () => api.usage.getModelDistribution(effectiveFilter),
   });
 
   const { data: userTrend } = useQuery({
-    queryKey: ["userTrend", filter],
-    queryFn: () => api.usage.getUserTrend(filter),
+    queryKey: ["userTrend", effectiveFilter],
+    queryFn: () => api.usage.getUserTrend(effectiveFilter),
   });
 
   const totalTokens = (stats?.total_prompt_tokens ?? 0) + (stats?.total_completion_tokens ?? 0);
@@ -149,8 +166,27 @@ export function DashboardPage() {
   // Limit distribution to TOP 10
   const distributionData = (() => {
     if (!distribution?.length) return [];
-    return [...distribution].sort((a, b) => b.count - a.count).slice(0, 10);
+    const sorted = [...distribution].sort((a, b) => {
+      const aVal = distributionMode === "tokens"
+        ? a.prompt_tokens + a.completion_tokens
+        : a.count;
+      const bVal = distributionMode === "tokens"
+        ? b.prompt_tokens + b.completion_tokens
+        : b.count;
+      return bVal - aVal;
+    });
+    return sorted.slice(0, 10);
   })();
+
+  const distributionDataKey = distributionMode === "tokens"
+    ? "total_tokens"
+    : "count";
+
+  // Augment distributionData with computed total_tokens for Pie dataKey
+  const pieData = distributionData.map((item) => ({
+    ...item,
+    total_tokens: item.prompt_tokens + item.completion_tokens,
+  }));
 
   const setTimeRange = (range: string) => {
     const now = Date.now() / 1000;
@@ -171,7 +207,8 @@ export function DashboardPage() {
       default:
         start = 0;
     }
-    setFilter((prev) => ({ ...prev, start_time: start || undefined, end_time: undefined }));
+    setFilter((prev) => ({ ...prev, start_time: start, end_time: undefined }));
+    setManualGranularity(null); // 切换时间范围时重置为自动
   };
 
   return (
@@ -220,12 +257,9 @@ export function DashboardPage() {
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <span>{t("dashboard.filter.hour")}</span>
                     <Switch
-                      checked={filter.granularity === "day"}
+                      checked={effectiveGranularity === "day"}
                       onCheckedChange={(checked) =>
-                        setFilter((prev) => ({
-                          ...prev,
-                          granularity: checked ? "day" : "hour",
-                        }))
+                        setManualGranularity(checked ? "day" : "hour")
                       }
                     />
                     <span>{t("dashboard.filter.day")}</span>
@@ -238,7 +272,7 @@ export function DashboardPage() {
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="time" />
                     <YAxis tickFormatter={(value) => formatCompactNumber(Number(value))} />
-                    <Tooltip formatter={(value) => formatFullNumber(Number(value))} />
+                    <Tooltip formatter={(value) => formatCompactNumber(Number(value))} />
                     <Legend />
                     {consumptionSeries.series.map((series, index) => (
                       <Bar
@@ -282,23 +316,38 @@ export function DashboardPage() {
 
           <TabsContent value="distribution">
             <Card>
+              <CardHeader className="pb-0">
+                <div className="flex items-center justify-between gap-3">
+                  <CardTitle>{t("dashboard.charts.distribution")}</CardTitle>
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <span>{t("dashboard.filter.calls")}</span>
+                    <Switch
+                      checked={distributionMode === "tokens"}
+                      onCheckedChange={(checked) =>
+                        setDistributionMode(checked ? "tokens" : "count")
+                      }
+                    />
+                    <span>{t("dashboard.filter.tokens")}</span>
+                  </div>
+                </div>
+              </CardHeader>
               <CardContent className="pt-6">
                 <ResponsiveContainer width="100%" height={400}>
                   <PieChart>
                     <Pie
-                      data={distributionData}
-                      dataKey="count"
+                      data={pieData}
+                      dataKey={distributionDataKey}
                       nameKey="model"
                       cx="50%"
                       cy="50%"
                       outerRadius={150}
-                      label
+                      label={({ name }) => name}
                     >
-                      {distributionData.map((_, index) => (
+                      {pieData.map((_, index) => (
                         <Cell key={index} fill={COLORS[index % COLORS.length]} />
                       ))}
                     </Pie>
-                    <Tooltip />
+                    <Tooltip formatter={(value) => formatCompactNumber(Number(value))} />
                     <Legend />
                   </PieChart>
                 </ResponsiveContainer>
@@ -313,8 +362,8 @@ export function DashboardPage() {
                   <LineChart data={userTrendSeries.data}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="time" />
-                    <YAxis />
-                    <Tooltip />
+                    <YAxis tickFormatter={(value) => formatCompactNumber(Number(value))} />
+                    <Tooltip formatter={(value) => formatCompactNumber(Number(value))} />
                     <Legend />
                     {userTrendSeries.series.map((series, index) => (
                       <Line

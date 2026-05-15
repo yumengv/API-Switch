@@ -325,7 +325,9 @@
       "thirtyDays": "30 Days",
       "hour": "Hour",
       "day": "Day",
-      "week": "Week"
+      "week": "Week",
+      "calls": "Calls",
+      "tokens": "Tokens"
     }
   },
   "cli": {

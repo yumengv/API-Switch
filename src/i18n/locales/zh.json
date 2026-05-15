@@ -30,7 +30,7 @@
       "custom": "手动排序"
     },
     "group": {
-      "searchPlaceholder": "搜索或输入分组...",
+      "searchPlaceholder": "搜索/创建分组",
       "create": "创建 \"{{name}}\"",
       "updateFailed": "更新分组失败"
     },
@@ -325,7 +325,9 @@
       "thirtyDays": "30天",
       "hour": "小时",
       "day": "天",
-      "week": "周"
+      "week": "周",
+      "calls": "次数",
+      "tokens": "消耗"
     }
   },
   "cli": {
