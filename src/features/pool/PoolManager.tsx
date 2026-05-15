@@ -761,7 +761,7 @@ const handleToggleIntent = useCallback(async (entry: ApiEntry, enabled: boolean,
             results[entry.id] = result.latency_ms.toString();
           } else {
             results[entry.id] = "X";
-            await adapter.pool.toggle(entry.id, false); // invalidate below handles refresh for paginated query keys.
+            await adapter.pool.toggle(entry.id, false);
           }
         } catch {
           results[entry.id] = "X";

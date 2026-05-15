@@ -16,7 +16,7 @@
   },
   "apiPool": {
     "title": "模型管理",
-    "description": "统一管理代理的模型，支持导入与补录（Shift+Click: 全开/全关，Ctrl+Click: 置顶）",
+    "description": "Shift+Click: 全开/全关，Ctrl+Click: 置顶",
     "empty": "暂无 API 条目，请先在渠道管理中添加渠道并选择模型",
     "addApi": "添加 API",
     "addModel": "添加模型",

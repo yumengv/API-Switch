@@ -3,7 +3,7 @@
     "title": "API Switch"
   },
   "nav": {
-    "apiPool": "API Mgmt",
+    "apiPool": "Models",
     "channels": "Channels",
     "logs": "Usage Logs",
     "tokens": "Access Keys",
@@ -16,7 +16,7 @@
   },
   "apiPool": {
     "title": "API Management",
-    "description": "Manage proxy models in one place with import and manual backfill (Shift+Click: enable/disable all, Ctrl+Click: pin to top).",
+    "description": "Shift+Click: enable/disable all, Ctrl+Click: pin to top",
     "empty": "No API entries yet. Add a channel and select models first.",
     "addApi": "Add API",
     "addModel": "Add Model",
@@ -252,8 +252,8 @@
     "latency": "Latency(ms)",
     "duration": "Duration / First",
     "firstToken": "First Token(ms)",
-    "promptTokens": "Prompt Tokens",
-    "completionTokens": "Completion Tokens",
+    "promptTokens": "IN Tokens",
+    "completionTokens": "OUT Tokens",
     "totalTokens": "Total Tokens",
     "cost": "Cost",
     "status": "Status",

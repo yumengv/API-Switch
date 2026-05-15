@@ -8,6 +8,7 @@ import { MainShell, type MainPage } from "@/features/shell/MainShell";
 import { useApiAdapter, isTauriRuntime } from "@/lib/useApiAdapter";
 import { LoginScreen } from "@/components/LoginScreen";
 import { AUTH_EXPIRED_EVENT, clearToken, getToken, logout, validateToken, type AuthExpiredDetail, TOKEN_KEY } from "@/lib/webAuth";
+import { checkUpdate, type UpdateInfo } from "@/lib/api";
 
 const ApiPoolPage = lazy(() => import("@/pages/ApiPoolPage").then((m) => ({ default: m.ApiPoolPage })));
 const ChannelPage = lazy(() => import("@/pages/ChannelPage").then((m) => ({ default: m.ChannelPage })));
@@ -70,6 +71,13 @@ function MainApp({ onLogout }: { onLogout?: () => void }) {
     if (!isDesktop) return;
     import("@tauri-apps/api/app").then(({ getVersion }) => {
       getVersion().then((v: string) => { document.title = `API-Switch - ${v}`; });
+    });
+  }, [isDesktop]);
+
+  useEffect(() => {
+    if (!isDesktop) return;
+    checkUpdate().then((info) => {
+      if (info) setUpdateInfo(info);
     });
   }, [isDesktop]);
 
