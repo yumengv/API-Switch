@@ -10,6 +10,8 @@ use tauri::{Emitter, State};
 pub struct TestResult {
     pub status: String,
     pub response_ms: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_detail: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -183,6 +185,7 @@ pub async fn test_entry_latency(
     Ok(TestResult {
         status: result.status,
         response_ms: result.response_ms,
+        error_detail: result.error_detail,
     })
 }
 
