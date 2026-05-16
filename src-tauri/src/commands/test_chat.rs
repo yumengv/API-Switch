@@ -1,11 +1,13 @@
+use crate::database::Database;
 use crate::error::AppError;
 use crate::proxy::protocol::get_adapter;
+use crate::refresh_tray_if_enabled;
 use crate::services::log_service::{insert_test_usage_log, TestUsageLogInput};
 use crate::AppState;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::time::Instant;
-use tauri::State;
+use tauri::{Emitter, State};
 
 #[derive(Debug, Serialize)]
 pub struct TestChatResponse {
@@ -27,8 +29,39 @@ pub struct TestChatMessage {
     pub content: String,
 }
 
+fn refresh_entries(app: &tauri::AppHandle) {
+    let _ = app.emit("entries-changed", ());
+    crate::state_version::bump();
+    refresh_tray_if_enabled(app);
+}
+
+fn mark_entry_available(
+    db: &Database,
+    app: &tauri::AppHandle,
+    entry_id: &str,
+    response_ms: &str,
+) -> Result<(), AppError> {
+    db.update_entry_response_ms(entry_id, response_ms)?;
+    db.toggle_entry(entry_id, true)?;
+    db.set_entry_cooldown(entry_id, None)?;
+    refresh_entries(app);
+    Ok(())
+}
+
+fn mark_entry_unavailable(
+    db: &Database,
+    app: &tauri::AppHandle,
+    entry_id: &str,
+) -> Result<(), AppError> {
+    db.update_entry_response_ms(entry_id, "X")?;
+    db.toggle_entry(entry_id, false)?;
+    refresh_entries(app);
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn test_chat(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     entry_id: String,
     messages: Vec<TestChatMessage>,
@@ -86,10 +119,11 @@ pub async fn test_chat(
                     success: false,
                     error_message: Some(&message),
                     error_kind: Some("network_error"),
-                    response_ms: None,
+                    response_ms: Some("X"),
                     error_preview: None,
                 },
             );
+            mark_entry_unavailable(&db, &app, &entry.id)?;
             return Err(AppError::Network(message));
         }
     };
@@ -116,11 +150,11 @@ pub async fn test_chat(
                 success: false,
                 error_message: Some(&log_message),
                 error_kind: Some("http_error"),
-                response_ms: None,
+                response_ms: Some("X"),
                 error_preview: Some(&body),
             },
-
         );
+        mark_entry_unavailable(&db, &app, &entry.id)?;
         return Err(AppError::Proxy(error_message));
     }
 
@@ -145,10 +179,11 @@ pub async fn test_chat(
                     success: false,
                     error_message: Some(&message),
                     error_kind: Some("parse_error"),
-                    response_ms: None,
+                    response_ms: Some("X"),
                     error_preview: None,
                 },
             );
+            mark_entry_unavailable(&db, &app, &entry.id)?;
             return Err(AppError::Internal(message));
         }
     };
@@ -167,6 +202,31 @@ pub async fn test_chat(
         .unwrap_or("")
         .to_string();
 
+    if content.trim().is_empty() {
+        let message = "empty_response_content";
+        insert_test_usage_log(
+            &db,
+            None,
+            TestUsageLogInput {
+                entry: &entry,
+                channel: &channel,
+                operation: "test_chat",
+                log_group: "test_chat",
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                latency_ms: latency_ms as i64,
+                status_code: 200,
+                success: false,
+                error_message: Some(message),
+                error_kind: Some("empty_content"),
+                response_ms: Some("X"),
+                error_preview: None,
+            },
+        );
+        mark_entry_unavailable(&db, &app, &entry.id)?;
+        return Err(AppError::Internal(message.to_string()));
+    }
+
     // Extract usage
     let usage = json_body.get("usage").map(|u| TestChatUsage {
         prompt_tokens: u.get("prompt_tokens").and_then(|v| v.as_i64()).unwrap_or(0),
@@ -177,6 +237,7 @@ pub async fn test_chat(
         total_tokens: u.get("total_tokens").and_then(|v| v.as_i64()).unwrap_or(0),
     });
 
+    let response_ms = latency_ms.to_string();
     insert_test_usage_log(
         &db,
         None,
@@ -192,10 +253,12 @@ pub async fn test_chat(
             success: true,
             error_message: None,
             error_kind: None,
-            response_ms: Some(&latency_ms.to_string()),
+            response_ms: Some(&response_ms),
             error_preview: None,
         },
     );
+
+    mark_entry_available(&db, &app, &entry.id, &response_ms)?;
 
     Ok(TestChatResponse {
         content,
