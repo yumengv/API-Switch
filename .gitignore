@@ -67,6 +67,12 @@ key.txt
 .scripts/
 src-tauri/icons/Square48x48Logo.png
 
+# Local database files
+api-switch.db
+*.db
+*.db-shm
+*.db-wal
+
 # Local build helper
 build.ps1
 
