@@ -480,6 +480,17 @@ export const apiAdapter: ApiAdapter = {
       ? tauriCmd<TestChatResponse>('test_chat', { entryId, messages })
       : webRequest<TestChatResponse>('POST', '/test-chat', { entry_id: entryId, messages }),
 
+  dirty: {
+    /** 轮询脏标记，模块取值: 'log' | 'pool' | 'channel' | 'token' */
+    take: (module: 'log' | 'pool' | 'channel' | 'token') => {
+      if (useTauri()) {
+        return tauriCmd<boolean>('take_dirty', { module });
+      }
+      // Web 环境无脏标记机制，默认返回 false
+      return Promise.resolve(false);
+    },
+  },
+
   translation: {
     getLatest: () => {
       if (useTauri()) {

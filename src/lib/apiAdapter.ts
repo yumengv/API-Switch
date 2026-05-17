@@ -58,8 +58,16 @@ settings: {
   getVersion(): Promise<{ version: string }>;
   getAdminStatus(): Promise<AdminStatus>;
   getStateVersion(): Promise<{ version: number }>;
+  dirty: {
+    /**
+     * 轮询脏标记，模块取值: 'log' | 'pool' | 'channel' | 'token'
+     * 返回 true 表示对应模块有变动，需要刷新查询
+     */
+    take(module: 'log' | 'pool' | 'channel' | 'token'): Promise<boolean>;
+  };
 }
 
-// Types referenced above – import from shared definitions
+
+
 import type { Channel, CreateChannelParams, UpdateChannelParams, FetchModelsResult, ProbeResult, TestChannelResult, ModelInfo, ModelCatalogMetaUpdate } from '../features/channels/types';
 import type { DashboardFilter, DashboardStats, ChartDataPoint, ModelRanking, UsageLog, UsageLogFilter, PaginatedResult, ApiEntry, AccessKey, AppSettings, ProxyStatus, AdminStatus, TestChatResponse, TranslationRelayPayload, TranslationRelayRequest } from '../types';
