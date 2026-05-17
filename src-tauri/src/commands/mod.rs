@@ -2,6 +2,7 @@ pub mod admin_cmd;
 pub mod channel;
 pub mod cli;
 pub mod config;
+pub mod dirty_cmds;
 pub mod limit;
 pub mod pool;
 pub mod proxy_cmd;
