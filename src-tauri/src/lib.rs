@@ -1,4 +1,5 @@
 mod admin;
+mod backup;
 mod commands;
 mod database;
 mod dirty;
@@ -252,6 +253,9 @@ pub fn run() {
         }
 
             log::info!("API Switch initialized");
+            tauri::async_runtime::spawn(async move {
+                backup::run_backup();
+            });
             Ok(())
         })
     .invoke_handler(tauri::generate_handler![
