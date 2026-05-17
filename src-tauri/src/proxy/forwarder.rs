@@ -338,6 +338,7 @@ struct ForwardResult {
 /// Primary log writing happens in Poll::Ready(None) — this guard is fallback only.
 struct StreamLogGuard {
     logged: Arc<AtomicBool>,
+    dirty: Arc<crate::dirty::DirtyFlags>,
     db: Arc<Database>,
     app_handle: Option<tauri::AppHandle>,
     access_key: Option<AccessKey>,
@@ -398,8 +399,10 @@ impl Drop for StreamLogGuard {
             let entry = self.entry.clone();
             let requested_model = self.requested_model.clone();
             let status_code = self.status_code;
+            let dirty = self.dirty.clone();
             tokio::spawn(async move {
                 log_usage(
+                    &dirty,
                     &db,
                     &app_handle,
                     access_key.as_ref(),
@@ -476,6 +479,7 @@ pub async fn forward_with_retry(
                     let attempt_path = attempt_path_json(&attempts);
                     let latency_ms = elapsed.as_millis() as i64;
                     log_usage(
+                        &state.dirty,
                         &state.db,
                         &state.app_handle,
                         access_key,
@@ -505,6 +509,7 @@ pub async fn forward_with_retry(
 
                 // Step 1: Always write usage log for every failed attempt
                 log_usage(
+                    &state.dirty,
                     &state.db,
                     &state.app_handle,
                     access_key,
@@ -797,10 +802,12 @@ fn build_streaming_response(
     let entries_app_handle = state.app_handle.clone();
     let success_circuit_breakers = state.circuit_breakers.clone();
     let success_failure_counts = state.failure_counts.clone();
+    let dirty_flags = state.dirty.clone();
 
     // Guard captured by the move closure → lives as long as the stream body
     let guard = StreamLogGuard {
         logged: logged.clone(),
+        dirty: state.dirty.clone(),
         db: db.clone(),
         app_handle: app_handle.clone(),
         access_key: access_key.clone(),
@@ -848,8 +855,10 @@ fn build_streaming_response(
                     let ct = completion_tokens.load(Ordering::SeqCst);
                     let ft = first_token_ms.load(Ordering::SeqCst);
                     let lat = start.elapsed().as_millis() as i64;
+                    let dirty2 = dirty_flags.clone();
                     tokio::spawn(async move {
                         log_usage(
+                            &dirty2,
                             &db2,
                             &ah2,
                             ak2.as_ref(),
@@ -874,6 +883,7 @@ fn build_streaming_response(
                         db.clone(),
                         entries_app_handle.clone(),
                         entry_id.clone(),
+                        dirty_flags.clone(),
                     );
                 }
                 return Poll::Ready(Some(Err(std::io::Error::new(
@@ -915,8 +925,10 @@ fn build_streaming_response(
                             let ct = completion_tokens.load(Ordering::SeqCst);
                             let ft = first_token_ms.load(Ordering::SeqCst);
                             let lat = start.elapsed().as_millis() as i64;
+                            let dirty2 = dirty_flags.clone();
                             tokio::spawn(async move {
                                 log_usage(
+                                    &dirty2,
                                     &db2,
                                     &ah2,
                                     ak2.as_ref(),
@@ -941,6 +953,7 @@ fn build_streaming_response(
                                 db.clone(),
                                 entries_app_handle.clone(),
                                 entry_id.clone(),
+                                dirty_flags.clone(),
                             );
                         }
                         return Poll::Ready(Some(Err(std::io::Error::new(
@@ -1058,8 +1071,10 @@ fn build_streaming_response(
                         let ak2 = access_key.clone();
                         let e2 = entry.clone();
                         let rm2 = requested_model.clone();
+                        let dirty2 = dirty_flags.clone();
                         tokio::spawn(async move {
                             log_usage(
+                                &dirty2,
                                 &db2,
                                 &ah2,
                                 ak2.as_ref(),
@@ -1085,6 +1100,7 @@ fn build_streaming_response(
                                 db.clone(),
                                 entries_app_handle.clone(),
                                 entry_id.clone(),
+                                dirty_flags.clone(),
                             );
                         }
                     }
@@ -1161,8 +1177,10 @@ fn build_streaming_response(
                         let eid = entry_id.clone();
                         let sdb = settings_cache.clone();
                         let eah = entries_app_handle.clone();
+                        let dirty2 = dirty_flags.clone();
                         tokio::spawn(async move {
                             log_usage(
+                                &dirty2,
                                 &db2,
                                 &ah2,
                                 ak2.as_ref(),
@@ -1180,9 +1198,9 @@ fn build_streaming_response(
                                 Some(StreamEndReason::Done),
                             );
                             if success {
-                                spawn_record_circuit_success(scb, sfc, sdb, db2.clone(), eah, eid);
+                                spawn_record_circuit_success(scb, sfc, sdb, db2.clone(), eah, eid, dirty2.clone());
                             } else {
-                                spawn_cool_down_entry(scb, sfc, sdb, db2.clone(), eah, eid);
+                                spawn_cool_down_entry(scb, sfc, sdb, db2.clone(), eah, eid, dirty2.clone());
                             }
                         });
                         if let Some(reason) = failure_reason {
@@ -1494,6 +1512,7 @@ async fn disable_entry(state: &ProxyState, entry: &ApiEntry) {
 
     let _ = state.db.toggle_entry(&entry.id, false);
     let _ = state.db.set_entry_cooldown(&entry.id, Some(cooldown_until));
+    state.dirty.mark_pool();
     if let Some(h) = &state.app_handle { let _ = h.emit("entries-changed", ()); }
     crate::state_version::bump();
     refresh_tray(&state.app_handle);
@@ -1504,6 +1523,7 @@ async fn disable_entry(state: &ProxyState, entry: &ApiEntry) {
 
 async fn record_circuit_success(state: &ProxyState, entry_id: &str) {
     let _ = state.db.set_entry_cooldown(entry_id, None);
+    state.dirty.mark_pool();
     if let Some(h) = &state.app_handle { let _ = h.emit("entries-changed", ()); }
     crate::state_version::bump();
     refresh_tray(&state.app_handle);
@@ -1538,6 +1558,7 @@ async fn cool_down_entry(state: &ProxyState, entry: &ApiEntry) {
         let six_hours_later = chrono::Utc::now().timestamp() + 21600;
         let _ = state.db.set_entry_cooldown(&entry.id, Some(six_hours_later));
         let _ = state.db.toggle_entry(&entry.id, false);
+        state.dirty.mark_pool();
         if let Some(h) = &state.app_handle { let _ = h.emit("entries-changed", ()); }
         crate::state_version::bump();
         refresh_tray(&state.app_handle);
@@ -1555,6 +1576,7 @@ async fn cool_down_entry(state: &ProxyState, entry: &ApiEntry) {
 
     let cooldown_until = chrono::Utc::now().timestamp() + recovery_secs as i64;
     let _ = state.db.set_entry_cooldown(&entry.id, Some(cooldown_until));
+    state.dirty.mark_pool();
     if let Some(h) = &state.app_handle { let _ = h.emit("entries-changed", ()); }
     crate::state_version::bump();
     refresh_tray(&state.app_handle);
@@ -1584,11 +1606,13 @@ fn spawn_record_circuit_success(
     db: Arc<Database>,
     app_handle: Option<tauri::AppHandle>,
     entry_id: String,
+    dirty: Arc<crate::dirty::DirtyFlags>,
 ) {
     tokio::spawn(async move {
         let recovery_secs = settings.read().await.circuit_recovery_secs as u64;
 
         let _ = db.set_entry_cooldown(&entry_id, None);
+        dirty.mark_pool();
         if let Some(h) = &app_handle { let _ = h.emit("entries-changed", ()); }
         crate::state_version::bump();
         refresh_tray(&app_handle);
@@ -1612,6 +1636,7 @@ fn spawn_cool_down_entry(
     db: Arc<Database>,
     app_handle: Option<tauri::AppHandle>,
     entry_id: String,
+    dirty: Arc<crate::dirty::DirtyFlags>,
 ) {
     tokio::spawn(async move {
         let settings = settings.read().await.clone();
@@ -1631,6 +1656,7 @@ fn spawn_cool_down_entry(
             let six_hours_later = chrono::Utc::now().timestamp() + 21600;
             let _ = db.set_entry_cooldown(&entry_id, Some(six_hours_later));
             let _ = db.toggle_entry(&entry_id, false);
+            dirty.mark_pool();
             if let Some(h) = &app_handle { let _ = h.emit("entries-changed", ()); }
             crate::state_version::bump();
             refresh_tray(&app_handle);
@@ -1648,6 +1674,7 @@ fn spawn_cool_down_entry(
 
         let cooldown_until = chrono::Utc::now().timestamp() + recovery_secs as i64;
         let _ = db.set_entry_cooldown(&entry_id, Some(cooldown_until));
+        dirty.mark_pool();
         if let Some(h) = &app_handle { let _ = h.emit("entries-changed", ()); }
         crate::state_version::bump();
         refresh_tray(&app_handle);
@@ -1670,6 +1697,7 @@ fn spawn_cool_down_entry(
 }
 
 fn log_usage(
+    dirty: &crate::dirty::DirtyFlags,
     db: &Database,
     app_handle: &Option<tauri::AppHandle>,
     access_key: Option<&AccessKey>,
@@ -1701,7 +1729,7 @@ fn log_usage(
     })
     .to_string();
 
-    let _ = db.insert_usage_log(
+    if db.insert_usage_log(
         log_type,
         content,
         access_key.map(|ak| ak.id.as_str()),
@@ -1726,7 +1754,9 @@ fn log_usage(
         &other,
         error_message,
         None,
-    );
+    ).is_ok() {
+        dirty.mark_log();
+    }
 
     if let Some(h) = app_handle { let _ = h.emit("new-usage-log", ()); }
     crate::state_version::bump();

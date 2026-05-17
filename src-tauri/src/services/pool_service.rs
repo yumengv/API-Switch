@@ -158,10 +158,18 @@ fn truncate_for_log(value: &str, max_chars: usize) -> String {
     value.chars().take(max_chars).collect::<String>()
 }
 
+fn mark_latency_test_dirty(dirty: Option<&crate::dirty::DirtyFlags>) {
+    if let Some(dirty) = dirty {
+        dirty.mark_pool();
+        dirty.mark_log();
+    }
+}
+
 /// Test latency for a specific entry.
 pub async fn test_entry_latency(
     db: &Database,
     entry_id: &str,
+    dirty: Option<&crate::dirty::DirtyFlags>,
 ) -> Result<TestLatencyResult, AppError> {
     let entries = db.get_entries_for_routing_all()?;
     let entry = entries
@@ -211,6 +219,7 @@ pub async fn test_entry_latency(
                     error_preview: None,
                 },
             );
+            mark_latency_test_dirty(dirty);
             return Err(AppError::Network(message));
         }
     };
@@ -246,6 +255,7 @@ pub async fn test_entry_latency(
                     error_preview: None,
                 },
             );
+            mark_latency_test_dirty(dirty);
             return Ok(TestLatencyResult {
                 status: "failed:network_error".to_string(),
                 response_ms: "X".to_string(),
@@ -287,6 +297,7 @@ pub async fn test_entry_latency(
                 error_preview: Some(&error_preview),
             },
         );
+        mark_latency_test_dirty(dirty);
         return Ok(TestLatencyResult {
             status: "failed:http_error".to_string(),
             response_ms: "X".to_string(),
@@ -320,6 +331,7 @@ pub async fn test_entry_latency(
                     error_preview: None,
                 },
             );
+            mark_latency_test_dirty(dirty);
             return Ok(TestLatencyResult {
                 status: "failed:response_error".to_string(),
                 response_ms: "X".to_string(),
@@ -350,6 +362,7 @@ pub async fn test_entry_latency(
                 error_preview: None,
             },
         );
+        mark_latency_test_dirty(dirty);
 
         return Ok(TestLatencyResult {
             status: "failed:empty_response".to_string(),
@@ -387,7 +400,7 @@ pub async fn test_entry_latency(
             error_preview: None,
         },
     );
-
+    mark_latency_test_dirty(dirty);
 
     Ok(TestLatencyResult {
         status: "ok".to_string(),

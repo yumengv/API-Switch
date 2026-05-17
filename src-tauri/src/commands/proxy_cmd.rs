@@ -29,6 +29,7 @@ pub async fn start_proxy(
         state.settings.clone(),
         Some(app.clone()),
         state.failure_counts.clone(),
+        state.dirty.clone(),
     );
     let admin_router = crate::admin::build_combined_router(
         &settings,
