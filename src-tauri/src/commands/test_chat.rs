@@ -38,12 +38,14 @@ fn refresh_entries(app: &tauri::AppHandle) {
 fn mark_entry_available(
     db: &Database,
     app: &tauri::AppHandle,
+    dirty: &crate::dirty::DirtyFlags,
     entry_id: &str,
     response_ms: &str,
 ) -> Result<(), AppError> {
     db.update_entry_response_ms(entry_id, response_ms)?;
     db.toggle_entry(entry_id, true)?;
     db.set_entry_cooldown(entry_id, None)?;
+    dirty.mark_pool();
     refresh_entries(app);
     Ok(())
 }
@@ -51,10 +53,12 @@ fn mark_entry_available(
 fn mark_entry_unavailable(
     db: &Database,
     app: &tauri::AppHandle,
+    dirty: &crate::dirty::DirtyFlags,
     entry_id: &str,
 ) -> Result<(), AppError> {
     db.update_entry_response_ms(entry_id, "X")?;
     db.toggle_entry(entry_id, false)?;
+    dirty.mark_pool();
     refresh_entries(app);
     Ok(())
 }
@@ -123,7 +127,8 @@ pub async fn test_chat(
                     error_preview: None,
                 },
             );
-            mark_entry_unavailable(&db, &app, &entry.id)?;
+            state.dirty.mark_log();
+            mark_entry_unavailable(&db, &app, &state.dirty, &entry.id)?;
             return Err(AppError::Network(message));
         }
     };
@@ -154,7 +159,8 @@ pub async fn test_chat(
                 error_preview: Some(&body),
             },
         );
-        mark_entry_unavailable(&db, &app, &entry.id)?;
+        state.dirty.mark_log();
+        mark_entry_unavailable(&db, &app, &state.dirty, &entry.id)?;
         return Err(AppError::Proxy(error_message));
     }
 
@@ -183,7 +189,8 @@ pub async fn test_chat(
                     error_preview: None,
                 },
             );
-            mark_entry_unavailable(&db, &app, &entry.id)?;
+            state.dirty.mark_log();
+            mark_entry_unavailable(&db, &app, &state.dirty, &entry.id)?;
             return Err(AppError::Internal(message));
         }
     };
@@ -223,7 +230,8 @@ pub async fn test_chat(
                 error_preview: None,
             },
         );
-        mark_entry_unavailable(&db, &app, &entry.id)?;
+        state.dirty.mark_log();
+        mark_entry_unavailable(&db, &app, &state.dirty, &entry.id)?;
         return Err(AppError::Internal(message.to_string()));
     }
 
@@ -257,8 +265,9 @@ pub async fn test_chat(
             error_preview: None,
         },
     );
+    state.dirty.mark_log();
 
-    mark_entry_available(&db, &app, &entry.id, &response_ms)?;
+    mark_entry_available(&db, &app, &state.dirty, &entry.id, &response_ms)?;
 
     Ok(TestChatResponse {
         content,

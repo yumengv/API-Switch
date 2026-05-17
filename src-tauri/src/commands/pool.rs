@@ -88,6 +88,7 @@ pub async fn toggle_entry(
     enabled: bool,
 ) -> Result<(), AppError> {
     pool_service::toggle_entry(&state.db, &state.failure_counts, &id, enabled)?;
+    state.dirty.mark_pool();
     let _ = app.emit("entries-changed", ());
     crate::state_version::bump();
     crate::refresh_tray_if_enabled(&app);
@@ -104,6 +105,7 @@ pub async fn batch_toggle_entries(
     enabled: bool,
 ) -> Result<(), AppError> {
     pool_service::batch_toggle_entries(&state.db, &state.failure_counts, &ids, enabled)?;
+    state.dirty.mark_pool();
     let _ = app.emit("entries-changed", ());
     crate::state_version::bump();
     crate::refresh_tray_if_enabled(&app);
@@ -117,6 +119,7 @@ pub async fn reorder_entries(
     ordered_ids: Vec<String>,
 ) -> Result<(), AppError> {
     pool_service::reorder_entries(&state.db, &ordered_ids)?;
+    state.dirty.mark_pool();
     let _ = app.emit("entries-changed", ());
     crate::state_version::bump();
     crate::refresh_tray_if_enabled(&app);
@@ -130,6 +133,7 @@ pub async fn delete_entry(
     id: String,
 ) -> Result<(), AppError> {
     pool_service::delete_entry(&state.db, &id)?;
+    state.dirty.mark_pool();
     let _ = app.emit("entries-changed", ());
     crate::state_version::bump();
     crate::refresh_tray_if_enabled(&app);
@@ -143,6 +147,7 @@ pub async fn create_entry(
     params: CreateEntryParams,
 ) -> Result<ApiEntry, AppError> {
     let entry = pool_service::create_entry(&state.db, params.into())?;
+    state.dirty.mark_pool();
     let _ = app.emit("entries-changed", ());
     crate::state_version::bump();
     crate::refresh_tray_if_enabled(&app);
@@ -167,6 +172,7 @@ pub async fn backfill_entry_catalog_meta(
         })
         .collect();
     pool_service::backfill_entry_catalog_meta(&state.db, items)?;
+    state.dirty.mark_pool();
     crate::refresh_tray_if_enabled(&app);
     Ok(())
 }
@@ -178,7 +184,7 @@ pub async fn test_entry_latency(
     entry_id: String,
 ) -> Result<TestResult, AppError> {
     let db = state.db.clone();
-    let result = pool_service::test_entry_latency(&db, &entry_id).await?;
+    let result = pool_service::test_entry_latency(&db, &entry_id, Some(&state.dirty)).await?;
     let _ = app.emit("entries-changed", ());
     crate::state_version::bump();
     crate::refresh_tray_if_enabled(&app);
@@ -197,6 +203,7 @@ pub async fn update_entry_response_ms(
     response_ms: String,
 ) -> Result<(), AppError> {
     pool_service::update_entry_response_ms(&state.db, &entry_id, &response_ms)?;
+    state.dirty.mark_pool();
     let _ = app.emit("entries-changed", ());
     crate::state_version::bump();
     crate::refresh_tray_if_enabled(&app);
@@ -216,6 +223,7 @@ pub async fn update_entry_group(
     group_name: String,
 ) -> Result<(), AppError> {
     pool_service::update_entry_group(&state.db, &id, &group_name)?;
+    state.dirty.mark_pool();
     let _ = app.emit("entries-changed", ());
     crate::state_version::bump();
     crate::refresh_tray_if_enabled(&app);

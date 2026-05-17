@@ -99,7 +99,9 @@ pub fn update_channel_response_ms(
             channel_id: params.channel_id,
             response_ms: params.response_ms,
         },
-    )
+    )?;
+    state.dirty.mark_channel();
+    Ok(())
 }
 
 #[tauri::command]
@@ -134,6 +136,7 @@ pub async fn create_channel(
     )?;
     let _ = app.emit("channels-changed", ());
     crate::state_version::bump();
+    state.dirty.mark_channel();
     Ok(channel)
 }
 
@@ -143,7 +146,7 @@ pub async fn update_channel(
     state: State<'_, AppState>,
     params: UpdateChannelParams,
 ) -> Result<Channel, AppError> {
-    channel_service::update_channel(
+    let channel = channel_service::update_channel(
         &state.db,
         Some(&app),
         channel_service::UpdateChannelParams {
@@ -155,7 +158,9 @@ pub async fn update_channel(
             enabled: params.enabled,
             notes: params.notes,
         },
-    )
+    )?;
+    state.dirty.mark_channel();
+    Ok(channel)
 }
 
 #[tauri::command]
@@ -164,7 +169,10 @@ pub async fn delete_channel(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<(), AppError> {
-    channel_service::delete_channel(&state.db, Some(&app), id)
+    channel_service::delete_channel(&state.db, Some(&app), id)?;
+    state.dirty.mark_channel();
+    state.dirty.mark_pool();
+    Ok(())
 }
 
 #[tauri::command]
@@ -219,6 +227,7 @@ pub async fn test_channel(
         crate::state_version::bump();
     }
 
+    state.dirty.mark_channel();
     Ok(result)
 }
 
@@ -270,6 +279,8 @@ pub async fn select_models(
     let _ = app.emit("entries-changed", ());
     let _ = app.emit("channels-changed", ());
     crate::state_version::bump();
+    state.dirty.mark_channel();
+    state.dirty.mark_pool();
     crate::refresh_tray_if_enabled(&app);
     Ok(())
 }
