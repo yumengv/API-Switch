@@ -783,8 +783,23 @@ const handleToggleIntent = useCallback(async (entry: ApiEntry, enabled: boolean,
    };
 
   const testAllEntries = useCallback(async () => {
-    if (!filteredEntries.length || testProgress) return;
-    const scopedEntries = filteredEntries;
+    if (testProgress) return;
+    const firstPage = await adapter.pool.listPaginated({
+      page: 1,
+      pageSize: 100,
+      groupName: groupFilter !== "all" ? groupFilter : undefined,
+    }) as PaginatedResult<ApiEntry>;
+    const scopedEntries = [...firstPage.items];
+    const totalPages = Math.ceil(firstPage.total / firstPage.page_size);
+    for (let page = 2; page <= totalPages; page++) {
+      const nextPage = await adapter.pool.listPaginated({
+        page,
+        pageSize: firstPage.page_size,
+        groupName: groupFilter !== "all" ? groupFilter : undefined,
+      }) as PaginatedResult<ApiEntry>;
+      scopedEntries.push(...nextPage.items);
+    }
+    if (!scopedEntries.length) return;
     const results: Record<string, string> = {};
     const errorDetails: Record<string, string> = {};
     let completed = 0;
@@ -833,7 +848,7 @@ const handleToggleIntent = useCallback(async (entry: ApiEntry, enabled: boolean,
     setTestErrorDetails({});
     setTestProgress(null);
     await queryClient.invalidateQueries({ queryKey: entriesQueryKey });
-  }, [adapter.pool, entriesQueryKey, filteredEntries, queryClient, testProgress]);
+  }, [adapter.pool, entriesQueryKey, groupFilter, queryClient, testProgress]);
 
 
   return (
