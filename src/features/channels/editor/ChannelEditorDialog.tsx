@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { RefreshCw, Save, Zap } from 'lucide-react';
+import { RefreshCw, Save, X, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -59,6 +59,7 @@ export const ChannelEditorDialog: React.FC<{
   const probeSeqRef = useRef(0);
   const fetchSeqRef = useRef(0);
   const testSeqRef = useRef(0);
+  const existingModelsRef = useRef<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
 
   // 初始化表单数据
@@ -71,6 +72,7 @@ export const ChannelEditorDialog: React.FC<{
     setTimeRange(3);
     setShowApiKey(false);
     setAvailableProtocols([]);
+    existingModelsRef.current = new Set();
     // 模型区默认隐藏逻辑：仅当现有渠道已有模型时才默认展开，否则收起
     const hasModels = !!channel && ((channel.available_models?.length || 0) > 0 || (channel.selected_models?.length || 0) > 0);
     setModelsValidated(!!channel && ((channel.available_models?.length || 0) > 0));
@@ -159,21 +161,36 @@ export const ChannelEditorDialog: React.FC<{
     setModelsValidated(false);
   };
 
+  useEffect(() => {
+    if (!open || !channel?.id) {
+      existingModelsRef.current = new Set();
+      return;
+    }
+    let cancelled = false;
+    api.pool.list()
+      .then((entries) => {
+        if (cancelled) return;
+        existingModelsRef.current = new Set(
+          entries
+            .filter((entry) => entry.channel_id === channel.id)
+            .map((entry) => entry.model.toLowerCase()),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) {
+          existingModelsRef.current = new Set();
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api, channel?.id, open]);
+
   // 自动选择模型：所选时间范围内发布的模型 + 已存在模型 + 当前临时创建模型
-  const autoSelectModels = useCallback(async (models: EditorModelInfo[], channelId?: string): Promise<string[]> => {
+  const autoSelectModels = useCallback((models: EditorModelInfo[]): string[] => {
     const rangeStart = new Date();
     rangeStart.setMonth(rangeStart.getMonth() - timeRange);
     const rangeStartStr = rangeStart.toISOString().slice(0, 10);
-
-    let existingModels = new Set<string>();
-    if (channelId) {
-      try {
-        const entries = await api.pool.list();
-        existingModels = new Set(
-          entries.filter((entry) => entry.channel_id === channelId).map((entry) => entry.model.toLowerCase()),
-        );
-      } catch { }
-    }
 
     const selected = new Set<string>();
 
@@ -185,24 +202,18 @@ export const ChannelEditorDialog: React.FC<{
     }
 
     for (const model of models) {
-      if (existingModels.has(model.name.toLowerCase())) {
+      if (existingModelsRef.current.has(model.name.toLowerCase())) {
         selected.add(model.name);
       }
     }
 
     return Array.from(selected);
-  }, [api, timeRange]);
+  }, [timeRange]);
 
   useEffect(() => {
     if (!showModels || availableModels.length === 0) return;
-    let cancelled = false;
-    autoSelectModels(availableModels, channel?.id).then((nextSelected) => {
-      if (!cancelled) setSelectedModels(nextSelected);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [showModels, availableModels, channel?.id, autoSelectModels]);
+    setSelectedModels(autoSelectModels(availableModels));
+  }, [showModels, availableModels, autoSelectModels]);
 
   const createEditorModels = (models: Array<Record<string, unknown>>, sourceProtocol: string): EditorModelInfo[] =>
     models.map((item, index) => ({
@@ -268,7 +279,7 @@ export const ChannelEditorDialog: React.FC<{
       const finalModels = mergeModelsByName([fetched.models]);
       setModelsValidated(true);
       setAvailableModels(finalModels);
-      const nextSelected = await autoSelectModels(finalModels, channel?.id);
+      const nextSelected = autoSelectModels(finalModels);
       if (fetchSeqRef.current !== seq) return;
       setSelectedModels(nextSelected);
 
@@ -441,14 +452,6 @@ export const ChannelEditorDialog: React.FC<{
     return availableModels.filter((m) => m.name.toLowerCase().includes(modelSearch.toLowerCase()));
   }, [availableModels, modelSearch]);
 
-  const rowHeight = 37;
-  const listHeight = 296;
-  const [modelListScrollTop, setModelListScrollTop] = useState(0);
-  const visibleStart = Math.max(0, Math.floor(modelListScrollTop / rowHeight) - 4);
-  const visibleCount = Math.ceil(listHeight / rowHeight) + 8;
-  const visibleModels = filteredModels.slice(visibleStart, visibleStart + visibleCount);
-  const listPaddingTop = visibleStart * rowHeight;
-  const listPaddingBottom = Math.max(0, (filteredModels.length - visibleStart - visibleModels.length) * rowHeight);
 
 return (
     <Dialog open={open} onOpenChange={(value) => {
@@ -460,8 +463,8 @@ return (
       onOpenChange(value);
     }}>
       <DialogContent className={cn(
-        "sm:max-w-3xl flex flex-col",
-        showModels ? "max-w-3xl" : "max-w-xl"
+        "flex flex-col",
+        showModels ? "sm:max-w-3xl max-w-3xl" : "max-w-[500px]"
       )}>
         <DialogHeader>
           <DialogTitle>{channel ? t('channel.editor.editTitle') : t('channel.editor.title')}</DialogTitle>
@@ -574,14 +577,14 @@ return (
           {showModels && (
             <div className="min-w-0 space-y-3 pl-3 pr-4 pt-4">
               {/* 时间范围选择：3个月/6个月/12个月 */}
-              <div className="flex gap-2">
+              <div className="flex overflow-hidden rounded-md border border-input">
                 {([3, 6, 12] as const).map((months) => (
                   <Button
                     key={months}
                     size="sm"
-                    variant={timeRange === months ? "default" : "outline"}
+                    variant={timeRange === months ? "default" : "ghost"}
                     onClick={() => setTimeRange(months)}
-                    className="flex-1"
+                    className="flex-1 rounded-none border-0 border-r last:border-r-0"
                   >
                     {t('channel.editor.months', { count: months, defaultValue: `${months}个月` })}
                   </Button>
@@ -601,16 +604,12 @@ return (
                 <Button size="sm" variant="outline" onClick={clearAllSelected}>{t('common.clear', '清除')}</Button>
               </div>
 
-              {/* 模型列表 - 虚拟滚动 */}
-              <div
-                className="h-[296px] overflow-y-auto rounded-md border border-border bg-background pr-2"
-                onScroll={(event) => setModelListScrollTop(event.currentTarget.scrollTop)}
-              >
-                {listPaddingTop > 0 && <div style={{ height: listPaddingTop }} />}
-                {visibleModels.map((model) => {
+              {/* 模型列表 */}
+              <div className="h-[262px] overflow-y-auto rounded-md border border-border bg-background pr-2">
+                {filteredModels.map((model) => {
                   const testResult = modelTestResults[model.name];
                   return (
-                    <label key={model.id || model.name} htmlFor={`model-${model.id || model.name}`} className="flex cursor-pointer items-center gap-2 border-b border-border py-2 pl-3 pr-8 text-sm last:border-b-0 hover:bg-accent">
+                    <label key={model.id || model.name} htmlFor={`model-${model.id || model.name}`} className="flex cursor-pointer items-center gap-2 border-b border-border py-2 pl-3 pr-1 text-sm last:border-b-0 hover:bg-accent">
                       <Checkbox id={`model-${model.id || model.name}`} checked={selectedModels.includes(model.name)} onCheckedChange={() => toggleModel(model.name)} />
                       <span className={cn(
                         "truncate",
@@ -631,7 +630,6 @@ return (
                     </label>
                   );
                 })}
-                {listPaddingBottom > 0 && <div style={{ height: listPaddingBottom }} />}
                 {filteredModels.length === 0 && modelSearch.trim() ? (
                   <button
                     type="button"
@@ -676,7 +674,7 @@ return (
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={handleClose} disabled={saving || fetchingModels}>{t('common.cancel')}</Button>
+          <Button variant="outline" onClick={handleClose} disabled={saving || fetchingModels} className="gap-1.5"><X className="h-4 w-4" />{t('common.cancel')}</Button>
           <Button onClick={handleSave} disabled={saving || fetchingModels} className="gap-1.5">
             <Save className="h-4 w-4" />
             {saving ? t('channel.editor.saving') : t('common.save')}

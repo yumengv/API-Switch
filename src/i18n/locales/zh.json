@@ -21,7 +21,7 @@
     "addApi": "添加 API",
     "addModel": "添加模型",
     "testAllLatency": "一键测速",
-    "search": "搜索模型名 / 显示名 / 渠道",
+    "search": "搜索/创建模型名 / 显示名 / 渠道",
     "cooldownInline": "(冷却 {{time}})",
     "filterChannel": "筛选渠道",
     "sort": {
@@ -165,7 +165,7 @@
       "modelsEmptyVerified2": "端点已校验，可继续拉取模型",
       "fetchModels": "获取模型列表",
       "fetching": "获取中...",
-      "searchPlaceholder": "搜索模型",
+      "searchPlaceholder": "搜索/创建模型",
       "selectAllFiltered": "全选筛选结果",
       "clearSelected": "清空已选",
       "emptyPlaceholder": "请先完成渠道配置，然后点击\"获取模型列表\"。",

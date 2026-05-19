@@ -165,7 +165,7 @@
       "modelsEmptyVerified2": "Endpoint verified, can continue to fetch models",
       "fetchModels": "Fetch Model List",
       "fetching": "Fetching...",
-      "searchPlaceholder": "Search models",
+      "searchPlaceholder": "Search/Create model",
       "selectAllFiltered": "Select All Filtered",
       "clearSelected": "Clear Selected",
       "emptyPlaceholder": "Please complete channel configuration first, then click \"Fetch Model List\".",
