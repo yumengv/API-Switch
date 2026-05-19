@@ -115,6 +115,7 @@ impl ProxyServer {
             .route("/v1/models", get(handlers::handle_list_models))
             .route("/anthropic/v1/models", get(handlers::handle_list_models_claude))
             .route("/v1beta/models", get(handlers::handle_list_models_gemini))
+            .route("/v1beta/openai/models", get(handlers::handle_list_models))
             .route(
                 "/openai/deployments",
                 get(
