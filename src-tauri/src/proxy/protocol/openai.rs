@@ -1,19 +1,45 @@
 use super::{join_url, ProtocolAdapter};
 /// OpenAI protocol adapter.
 ///
-/// This is the "native" format — the proxy speaks OpenAI externally,
-/// so this adapter is essentially a passthrough.
+/// Handles all openai-type channels — both standard OpenAI endpoints
+/// (which expect /v1/chat/completions) and custom endpoints with a
+/// user-provided API path. When the base URL already contains a path
+/// after the host, that path is treated as the authoritative API root.
 use serde_json::Value;
-
 pub struct OpenAiAdapter;
+
+/// Returns `true` when the base URL already carries a path after the
+/// host:port. Such URLs are treated as authoritative API roots — the
+/// caller should append the endpoint directly without forcing a /v1/
+/// prefix.
+fn has_custom_api_path(base_url: &str) -> bool {
+    let base = base_url.trim_end_matches('/');
+    if let Some(scheme_end) = base.find("://") {
+        let after_scheme = &base[scheme_end + 3..];
+        if let Some(slash_pos) = after_scheme.find('/') {
+            return !after_scheme[slash_pos + 1..].is_empty();
+        }
+    }
+    false
+}
 
 impl ProtocolAdapter for OpenAiAdapter {
     fn build_chat_url(&self, base_url: &str, _model: &str) -> String {
-        join_url(base_url, "v1/chat/completions")
+        if has_custom_api_path(base_url) {
+            let base = base_url.trim_end_matches('/');
+            format!("{}/chat/completions", base)
+        } else {
+            join_url(base_url, "v1/chat/completions")
+        }
     }
 
     fn build_models_url(&self, base_url: &str, _api_key: &str) -> String {
-        join_url(base_url, "v1/models")
+        if has_custom_api_path(base_url) {
+            let base = base_url.trim_end_matches('/');
+            format!("{}/models", base)
+        } else {
+            join_url(base_url, "v1/models")
+        }
     }
 
     fn uses_query_auth(&self) -> bool {
