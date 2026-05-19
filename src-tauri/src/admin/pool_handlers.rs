@@ -182,6 +182,19 @@ pub async fn get_groups(State(state): State<AdminState>) -> Result<Json<Vec<Stri
     Ok(Json(groups))
 }
 
+
+/// PUT /admin/pool/:id/display-name - Update the display_name (alias) for an entry
+pub async fn update_display_name(
+    State(state): State<AdminState>,
+    Path(id): Path<String>,
+    Json(payload): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, AdminError> {
+    let display_name = payload.get("display_name").and_then(|v| v.as_str()).unwrap_or("");
+    pool_service::update_entry_display_name(&state.db, &id, display_name)?;
+    state.mark_pool_dirty();
+    Ok(Json(serde_json::json!({"ok": true})))
+}
+
 /// PUT /admin/pool/:id/group - Update the group_name for an entry
 pub async fn update_group(
     State(state): State<AdminState>,

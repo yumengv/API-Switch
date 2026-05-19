@@ -283,6 +283,7 @@ pub fn run() {
         commands::pool::test_entry_latency,
         commands::pool::update_entry_response_ms,
         commands::pool::get_all_groups,
+        commands::pool::update_entry_display_name,
         commands::pool::update_entry_group,
         commands::token::list_access_keys,
         commands::token::list_access_keys_paginated,

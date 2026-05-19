@@ -655,4 +655,15 @@ impl Database {
         .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
     }
+
+    pub fn update_entry_display_name(&self, id: &str, display_name: &str) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        let now = chrono::Utc::now().timestamp();
+        conn.execute(
+            "UPDATE api_entries SET display_name = ?1, updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![display_name, now, id],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
 }

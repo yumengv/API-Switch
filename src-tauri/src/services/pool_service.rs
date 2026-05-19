@@ -424,6 +424,10 @@ pub fn get_all_groups(db: &Database) -> Result<Vec<String>, AppError> {
 }
 
 /// Update the group_name for a specific entry.
+pub fn update_entry_display_name(db: &Database, id: &str, display_name: &str) -> Result<(), AppError> {
+    db.update_entry_display_name(id, display_name)
+}
+
 pub fn update_entry_group(db: &Database, id: &str, group_name: &str) -> Result<(), AppError> {
     db.update_entry_group(id, group_name)
 }

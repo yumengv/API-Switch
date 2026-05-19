@@ -37,12 +37,12 @@
     "cooldownRemaining": "Cooling down, {{time}} remaining",
     "channel": "Channel",
     "model": "Model",
-"selectChannel": "Select Channel",
-"selectModel": "Select Model",
-"noEnabledChannels": "No enabled channels available",
+    "selectChannel": "Select Channel",
+    "selectModel": "Select Model",
+    "noEnabledChannels": "No enabled channels available",
     "modelPlaceholder": "Enter model name, e.g. gpt-4o, claude-3.5-sonnet",
-    "displayName": "Display Name",
-    "displayNamePlaceholder": "Leave empty to use model name",
+    "displayName": "Alias",
+    "displayNamePlaceholder": "Optional, defaults to model name",
     "groupLabel": "Group",
     "modelMeta": {
       "releaseDate": "Released",
@@ -96,7 +96,9 @@
     "deleteConfirm": "Delete key {{name}}?",
     "deleteTitle": "Confirm Delete",
     "deleteDesc": "Delete {{name}}? This model will be removed from API management.",
-    "keyWarning": "The secret key will only be shown once. Keep it safe."
+    "keyWarning": "The secret key will only be shown once. Keep it safe.",
+    "alias": "Alias",
+    "editAlias": "Edit Alias"
   },
   "channel": {
     "title": "Channels",
@@ -146,7 +148,7 @@
       "placeholder": "model1, model2",
       "saveFailed": "Failed to select models"
     },
-"editor": {
+    "editor": {
       "title": "Add Channel",
       "editTitle": "Edit Channel",
       "channelName": "Channel Name",

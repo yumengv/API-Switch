@@ -216,6 +216,21 @@ pub fn get_all_groups(state: State<'_, AppState>) -> Result<Vec<String>, AppErro
 }
 
 #[tauri::command]
+pub async fn update_entry_display_name(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::AppState>,
+    id: String,
+    display_name: String,
+) -> Result<(), AppError> {
+    pool_service::update_entry_display_name(&state.db, &id, &display_name)?;
+    state.dirty.mark_pool();
+    let _ = app.emit("entries-changed", ());
+    crate::state_version::bump();
+    crate::refresh_tray_if_enabled(&app);
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn update_entry_group(
     app: tauri::AppHandle,
     state: State<'_, AppState>,

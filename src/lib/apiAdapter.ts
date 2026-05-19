@@ -33,6 +33,7 @@
     testLatency(id: string): Promise<{ entry_id: string; latency_ms: number | null; error_detail?: string }>;
     backfillCatalogMeta(items: { entryId: string; catalogProvider: string; catalogModelId: string }[]): Promise<void>;
     getGroups(): Promise<string[]>;
+    updateDisplayName(id: string, displayName: string): Promise<void>;
     updateGroup(id: string, groupName: string): Promise<void>;
   };
   tokens: {

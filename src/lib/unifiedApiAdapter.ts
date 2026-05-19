@@ -1,4 +1,4 @@
-﻿import type { ApiAdapter } from './apiAdapter';
+import type { ApiAdapter } from './apiAdapter';
 import type {
   Channel,
   CreateChannelParams,
@@ -351,7 +351,10 @@ export const apiAdapter: ApiAdapter = {
       useTauri()
         ? tauriCmd<void>('delete_entry', { id })
         : webRequest<void>('DELETE', `/pool/${id}`),
-
+      updateDisplayName: (id: string, display_name: string) =>
+        useTauri()
+          ? tauriCmd<void>("update_entry_display_name", { id, displayName: display_name })
+          : webRequest<void>("PUT", `/pool/${id}/display-name`, { display_name }),
     testLatency: async (id) => {
       if (useTauri()) {
         const result = await tauriCmd<{ status: string; response_ms: string; error_detail?: string }>('test_entry_latency', { entryId: id });
