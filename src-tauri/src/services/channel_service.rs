@@ -160,6 +160,8 @@ pub struct ProbeResult {
     pub status_code: Option<u16>,
     pub latency_ms: u64,
     pub detected_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub corrected_base_url: Option<String>,
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<ChannelOperationError>,
@@ -290,8 +292,11 @@ pub fn delete_channel(
     Ok(())
 }
 
-pub async fn probe_url(url: String) -> Result<ProbeResult, AppError> {
-    // identical implementation from original command
+pub async fn probe_url(
+    url: String,
+    api_type: Option<String>,
+    api_key: Option<String>,
+) -> Result<ProbeResult, AppError> {
     let url = url.trim_end_matches('/').trim();
     if url.is_empty() {
         return Ok(ProbeResult {
@@ -299,6 +304,7 @@ pub async fn probe_url(url: String) -> Result<ProbeResult, AppError> {
             status_code: None,
             latency_ms: 0,
             detected_type: None,
+            corrected_base_url: None,
             message: "Empty URL".into(),
             error: Some(ChannelOperationError::new(
                 ERROR_CODE_INVALID_URL,
@@ -313,6 +319,22 @@ pub async fn probe_url(url: String) -> Result<ProbeResult, AppError> {
         .map_err(|e| AppError::Network(format!("HTTP client: {e}")))?;
 
     let start = std::time::Instant::now();
+    if let (Some(api_type), Some(api_key)) = (api_type.as_deref(), api_key.as_deref()) {
+        if !api_key.trim().is_empty() {
+            if let Some(guess) = detect_endpoint_guess(api_type, url, api_key).await {
+                return Ok(ProbeResult {
+                    reachable: true,
+                    status_code: Some(200),
+                    latency_ms: start.elapsed().as_millis() as u64,
+                    detected_type: Some(guess.detected_type),
+                    message: format!("API calibrated ({})", guess.corrected_base_url),
+                    corrected_base_url: Some(guess.corrected_base_url),
+                    error: None,
+                });
+            }
+        }
+    }
+
     match client.head(url).send().await {
         Ok(r) => {
             let s = r.status().as_u16();
@@ -322,6 +344,7 @@ pub async fn probe_url(url: String) -> Result<ProbeResult, AppError> {
                 status_code: Some(s),
                 latency_ms: ms,
                 detected_type: None,
+                corrected_base_url: None,
                 message: format!("{s} ({ms}ms)"),
                 error: None,
             })
@@ -337,6 +360,7 @@ pub async fn probe_url(url: String) -> Result<ProbeResult, AppError> {
                         status_code: Some(s),
                         latency_ms: ms,
                         detected_type: None,
+                        corrected_base_url: None,
                         message: format!("{s} ({ms}ms)"),
                         error: None,
                     })
@@ -354,6 +378,7 @@ pub async fn probe_url(url: String) -> Result<ProbeResult, AppError> {
                         status_code: None,
                         latency_ms: ms,
                         detected_type: None,
+                        corrected_base_url: None,
                         message: e.to_string(),
                         error: Some(error),
                     })

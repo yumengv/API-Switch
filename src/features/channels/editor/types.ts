@@ -18,6 +18,7 @@ export interface UrlProbeResult {
   latency_ms: number;
   status_code?: number;
   detected_type?: string;
+  corrected_base_url?: string;
   message: string;
 }
 

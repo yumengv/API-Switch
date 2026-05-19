@@ -240,10 +240,10 @@ export const apiAdapter: ApiAdapter = {
         ? tauriCmd<FetchModelsResult>('fetch_models_direct', { apiType, baseUrl, apiKey, verified })
         : webRequest<FetchModelsResult>('POST', '/channels/fetch-models-direct', { apiType, baseUrl, apiKey, verified }),
 
-    probeUrl: (url) =>
+    probeUrl: (url, apiType, apiKey) =>
       useTauri()
-        ? tauriCmd<ProbeResult>('probe_url', { url })
-        : webRequest<ProbeResult>('POST', '/channels/probe-url', { url }),
+        ? tauriCmd<ProbeResult>('probe_url', { url, apiType, apiKey })
+        : webRequest<ProbeResult>('POST', '/channels/probe-url', { url, apiType, apiKey }),
 
     selectModels: (channelId, modelNames, availableModels, catalogMeta = []) =>
       useTauri()

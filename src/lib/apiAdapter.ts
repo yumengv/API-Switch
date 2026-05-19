@@ -7,7 +7,7 @@
     delete(id: string): Promise<void>;
     fetchModels(channelId: string): Promise<FetchModelsResult>;
     fetchModelsDirect(apiType: string, baseUrl: string, apiKey: string, verified?: boolean): Promise<FetchModelsResult>;
-    probeUrl(url: string): Promise<ProbeResult>;
+    probeUrl(url: string, apiType?: string, apiKey?: string): Promise<ProbeResult>;
     testChannel(channelId: string): Promise<TestChannelResult>;
     testChannelDirect(params: TestChannelDirectParams): Promise<TestChannelResult>;
     selectModels(channelId: string, modelNames: string[], availableModels: ModelInfo[], catalogMeta?: ModelCatalogMetaUpdate[]): Promise<void>;

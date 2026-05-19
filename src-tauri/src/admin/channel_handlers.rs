@@ -62,6 +62,8 @@ pub struct TestChannelDirectParams {
 #[derive(Deserialize)]
 pub struct ProbeUrlParams {
     pub url: String,
+    pub api_type: Option<String>,
+    pub api_key: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -225,7 +227,7 @@ pub async fn probe_url(
     State(_): State<AdminState>,
     Json(payload): Json<ProbeUrlParams>,
 ) -> Result<Json<ProbeResult>, AdminError> {
-    let res = channel_service::probe_url(payload.url).await?;
+    let res = channel_service::probe_url(payload.url, payload.api_type, payload.api_key).await?;
     Ok(Json(ensure_probe_result(res)?))
 }
 

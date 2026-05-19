@@ -176,8 +176,12 @@ pub async fn delete_channel(
 }
 
 #[tauri::command]
-pub async fn probe_url(url: String) -> Result<ProbeResult, AppError> {
-    channel_service::probe_url(url).await
+pub async fn probe_url(
+    url: String,
+    api_type: Option<String>,
+    api_key: Option<String>,
+) -> Result<ProbeResult, AppError> {
+    channel_service::probe_url(url, api_type, api_key).await
 }
 
 #[tauri::command]

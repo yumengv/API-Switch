@@ -98,16 +98,21 @@ export const ChannelEditorDialog: React.FC<{
     setProbingUrl(true);
     const timer = setTimeout(async () => {
       try {
-        const result = await api.channels.probeUrl(form.base_url.trim());
+        const result = await api.channels.probeUrl(form.base_url.trim(), form.api_type, form.api_key.trim());
         if (probeSeqRef.current === seq) {
           setUrlProbe(result as UrlProbeResult);
           if (result.reachable && result.detected_type) {
             setAvailableProtocols(prev => Array.from(new Set([...prev, result.detected_type!])));
+            setForm(prev => ({
+              ...prev,
+              api_type: result.detected_type || prev.api_type,
+              base_url: result.corrected_base_url || prev.base_url,
+            }));
           }
         }
       } catch {
         if (probeSeqRef.current === seq) {
-          setUrlProbe({ reachable: false, status_code: undefined, latency_ms: 0, detected_type: undefined, message: t('channel.editor.probeFailedGeneric', 'Probe failed') });
+          setUrlProbe({ reachable: false, status_code: undefined, latency_ms: 0, detected_type: undefined, corrected_base_url: undefined, message: t('channel.editor.probeFailedGeneric', 'Probe failed') });
         }
       } finally {
         if (probeSeqRef.current === seq) {
@@ -116,7 +121,7 @@ export const ChannelEditorDialog: React.FC<{
       }
     }, 800);
     return () => clearTimeout(timer);
-  }, [api, form.base_url, t]);
+  }, [api, form.api_key, form.api_type, form.base_url, t]);
 
   // canSave 必须检查 4 项：name, api_type, base_url, api_key 都有内容
   const canSave = !!(form.name.trim() && form.api_type.trim() && form.base_url.trim() && form.api_key.trim());
@@ -366,7 +371,9 @@ export const ChannelEditorDialog: React.FC<{
     setSaving(true);
     try {
       const keys = form.id ? [form.api_key.trim()] : form.api_key.split('\n').map(k => k.trim()).filter(k => k.length > 0);
-      
+      const successNames: string[] = [];
+      const failedNames: string[] = [];
+
       for (let i = 0; i < keys.length; i++) {
         const key = keys[i];
         const name = keys.length > 1 ? `${form.name}-${i + 1}` : form.name;
@@ -385,11 +392,24 @@ export const ChannelEditorDialog: React.FC<{
           response_ms: urlProbe?.reachable && urlProbe.latency_ms > 0 ? String(urlProbe.latency_ms) : undefined,
         };
 
-        const result = await api.channels.saveChannelWithModels(saveParams);
-        
-        if (result.warnings && result.warnings.length > 0) {
-          result.warnings.forEach((w: string) => { toast.warning(w); });
+        try {
+          const result = await api.channels.saveChannelWithModels(saveParams);
+          successNames.push(name);
+          if (result.warnings && result.warnings.length > 0) {
+            result.warnings.forEach((w: string) => { toast.warning(w); });
+          }
+        } catch (err) {
+          failedNames.push(name);
+          if (keys.length === 1) throw err;
+          toast.error(`${name}: ${getChannelErrorMessage(err, t('channel.editor.saveFailed', '保存渠道失败'))}`);
         }
+      }
+
+      if (successNames.length > 0 && keys.length > 1) {
+        toast.success(t('channel.editor.batchSaveSummary', '批量创建完成：成功 {{success}} 个，失败 {{failed}} 个', { success: successNames.length, failed: failedNames.length }));
+      }
+      if (successNames.length === 0 && failedNames.length > 0) {
+        throw new Error(t('channel.editor.batchSaveAllFailed', '批量创建全部失败'));
       }
 
       await onSaved();
@@ -412,6 +432,15 @@ export const ChannelEditorDialog: React.FC<{
     if (!modelSearch) return availableModels;
     return availableModels.filter((m) => m.name.toLowerCase().includes(modelSearch.toLowerCase()));
   }, [availableModels, modelSearch]);
+
+  const rowHeight = 37;
+  const listHeight = 256;
+  const [modelListScrollTop, setModelListScrollTop] = useState(0);
+  const visibleStart = Math.max(0, Math.floor(modelListScrollTop / rowHeight) - 4);
+  const visibleCount = Math.ceil(listHeight / rowHeight) + 8;
+  const visibleModels = filteredModels.slice(visibleStart, visibleStart + visibleCount);
+  const listPaddingTop = visibleStart * rowHeight;
+  const listPaddingBottom = Math.max(0, (filteredModels.length - visibleStart - visibleModels.length) * rowHeight);
 
 return (
     <Dialog open={open} onOpenChange={(value) => {
@@ -563,9 +592,13 @@ return (
                 <Button size="sm" variant="outline" onClick={clearAllSelected}>{t('channel.editor.clearSelected')}</Button>
               </div>
 
-              {/* 模型列表 - 增加高度 */}
-              <div className="max-h-64 overflow-y-auto rounded-md border border-border bg-background">
-                {filteredModels.map((model) => {
+              {/* 模型列表 - 虚拟滚动 */}
+              <div
+                className="h-64 overflow-y-auto rounded-md border border-border bg-background"
+                onScroll={(event) => setModelListScrollTop(event.currentTarget.scrollTop)}
+              >
+                {listPaddingTop > 0 && <div style={{ height: listPaddingTop }} />}
+                {visibleModels.map((model) => {
                   const testResult = modelTestResults[model.name];
                   return (
                     <label key={model.id || model.name} htmlFor={`model-${model.id || model.name}`} className="flex cursor-pointer items-center gap-2 border-b border-border px-3 py-2 text-sm last:border-b-0 hover:bg-accent">
@@ -589,6 +622,7 @@ return (
                     </label>
                   );
                 })}
+                {listPaddingBottom > 0 && <div style={{ height: listPaddingBottom }} />}
                 {filteredModels.length === 0 && modelSearch.trim() ? (
                   <button
                     type="button"
