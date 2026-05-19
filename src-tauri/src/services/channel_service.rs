@@ -957,6 +957,10 @@ fn build_models_url_variants_for_type(
         }
     }
 
+    if api_type == "gemini" {
+        push(format!("{base}/v1beta/models?key={api_key}"));
+    }
+
     urls
 }
 

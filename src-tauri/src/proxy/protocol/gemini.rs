@@ -104,7 +104,8 @@ impl ProtocolAdapter for GeminiAdapter {
     fn parse_models_response(&self, body: &Value) -> Vec<(String, Option<String>)> {
         // Google's OpenAI-compatible endpoint returns standard OpenAI format:
         // { data: [{ id: "gemini-1.5-pro", owned_by: "google", ... }] }
-        body.get("data")
+        let openai_models: Vec<(String, Option<String>)> = body
+            .get("data")
             .and_then(|d| d.as_array())
             .map(|arr| {
                 arr.iter()
@@ -115,7 +116,13 @@ impl ProtocolAdapter for GeminiAdapter {
                     })
                     .collect()
             })
-            .unwrap_or_default()
+            .unwrap_or_default();
+
+        if !openai_models.is_empty() {
+            return openai_models;
+        }
+
+        parse_gemini_native_models(body)
     }
 }
 
