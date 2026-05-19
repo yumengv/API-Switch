@@ -102,13 +102,20 @@ export const ChannelEditorDialog: React.FC<{
         const result = await api.channels.probeUrl(form.base_url.trim(), form.api_type, form.api_key.trim());
         if (probeSeqRef.current === seq) {
           setUrlProbe(result as UrlProbeResult);
-          if (result.reachable && result.detected_type) {
-            setAvailableProtocols(prev => Array.from(new Set([...prev, result.detected_type!])));
-            setForm(prev => ({
-              ...prev,
-              api_type: result.detected_type || prev.api_type,
-              base_url: result.corrected_base_url || prev.base_url,
-            }));
+          if (result.reachable) {
+            const types = result.available_types?.length
+              ? result.available_types
+              : result.detected_type
+                ? [result.detected_type]
+                : [];
+            setAvailableProtocols(types);
+            if (result.detected_type || result.corrected_base_url) {
+              setForm(prev => ({
+                ...prev,
+                api_type: result.detected_type || prev.api_type,
+                base_url: result.corrected_base_url || prev.base_url,
+              }));
+            }
           }
         }
       } catch {

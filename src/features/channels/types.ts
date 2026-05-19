@@ -83,6 +83,7 @@ export interface ProbeResult {
   latency_ms: number;
   detected_type?: string;
   corrected_base_url?: string;
+  available_types?: string[];
   message: string;
   warning?: string;
   error?: ChannelOperationError;

@@ -162,6 +162,8 @@ pub struct ProbeResult {
     pub detected_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub corrected_base_url: Option<String>,
+    #[serde(default)]
+    pub available_types: Vec<String>,
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<ChannelOperationError>,
@@ -305,6 +307,7 @@ pub async fn probe_url(
             latency_ms: 0,
             detected_type: None,
             corrected_base_url: None,
+            available_types: Vec::new(),
             message: "Empty URL".into(),
             error: Some(ChannelOperationError::new(
                 ERROR_CODE_INVALID_URL,
@@ -321,7 +324,8 @@ pub async fn probe_url(
     let start = std::time::Instant::now();
     if let (Some(api_type), Some(api_key)) = (api_type.as_deref(), api_key.as_deref()) {
         if !api_key.trim().is_empty() {
-            if let Some(guess) = detect_endpoint_guess(api_type, url, api_key).await {
+            let (primary_guess, all_available) = detect_endpoint_and_collect(api_type, url, api_key).await;
+            if let Some(guess) = primary_guess {
                 return Ok(ProbeResult {
                     reachable: true,
                     status_code: Some(200),
@@ -329,7 +333,20 @@ pub async fn probe_url(
                     detected_type: Some(guess.detected_type),
                     message: format!("API calibrated ({})", guess.corrected_base_url),
                     corrected_base_url: Some(guess.corrected_base_url),
+                    available_types: all_available,
                     error: None,
+                });
+            }
+            if !all_available.is_empty() {
+                return Ok(ProbeResult {
+                    reachable: true,
+                    status_code: Some(200),
+                    latency_ms: start.elapsed().as_millis() as u64,
+                    detected_type: Some(all_available[0].clone()),
+                    corrected_base_url: None,
+                    available_types: all_available,
+                    error: None,
+                    message: "Endpoint reachable via alternative protocol".into(),
                 });
             }
         }
@@ -345,6 +362,7 @@ pub async fn probe_url(
                 latency_ms: ms,
                 detected_type: None,
                 corrected_base_url: None,
+                available_types: Vec::new(),
                 message: format!("{s} ({ms}ms)"),
                 error: None,
             })
@@ -361,6 +379,7 @@ pub async fn probe_url(
                         latency_ms: ms,
                         detected_type: None,
                         corrected_base_url: None,
+                        available_types: Vec::new(),
                         message: format!("{s} ({ms}ms)"),
                         error: None,
                     })
@@ -379,6 +398,7 @@ pub async fn probe_url(
                         latency_ms: ms,
                         detected_type: None,
                         corrected_base_url: None,
+                        available_types: Vec::new(),
                         message: e.to_string(),
                         error: Some(error),
                     })
@@ -695,6 +715,58 @@ async fn fetch_models_result_with_fallback(
             "Could not fetch models. Check URL and API Key.",
         )
     }))
+}
+
+
+async fn detect_endpoint_and_collect(
+    api_type: &str,
+    base_url: &str,
+    api_key: &str,
+) -> (Option<EndpointGuess>, Vec<String>) {
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .danger_accept_invalid_certs(true)
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return (None, Vec::new()),
+    };
+
+    let original_url = normalize_base_url(base_url);
+    let base_site = extract_base_site(&original_url).unwrap_or_else(|| original_url.clone());
+    let mut all_found_types: Vec<String> = Vec::new();
+    let mut primary_guess: Option<EndpointGuess> = None;
+
+    let phase1_base_url = if api_type == "custom" { &original_url } else { &base_site };
+    match detect_type_with_base_url(&client, api_type, phase1_base_url, api_key, true).await {
+        DetectionResult::Found(guess) => {
+            let t = guess.detected_type.clone();
+            if !all_found_types.contains(&t) { all_found_types.push(t); }
+            primary_guess = Some(guess);
+        }
+        DetectionResult::Blocked(err) => {
+            log::warn!("[detect_endpoint] Stop after selected type failed with blocking error: {}", err.message());
+        }
+        DetectionResult::NotFound => {}
+    }
+
+    for current_type in ["openai", "responses", "anthropic", "gemini", "azure"] {
+        if current_type == api_type { continue; }
+        let candidate_base_url = &base_site;
+        match detect_type_with_base_url(&client, current_type, candidate_base_url, api_key, false).await {
+            DetectionResult::Found(guess) => {
+                let t = guess.detected_type.clone();
+                if !all_found_types.contains(&t) { all_found_types.push(t); }
+                if primary_guess.is_none() {
+                    primary_guess = Some(guess);
+                }
+            }
+            DetectionResult::Blocked(_) => {}
+            DetectionResult::NotFound => {}
+        }
+    }
+
+    (primary_guess, all_found_types)
 }
 
 fn normalize_api_type(api_type: &str) -> &'static str {

@@ -19,6 +19,7 @@ export interface UrlProbeResult {
   status_code?: number;
   detected_type?: string;
   corrected_base_url?: string;
+  available_types?: string[];
   message: string;
 }
 
