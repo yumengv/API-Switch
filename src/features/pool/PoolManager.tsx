@@ -146,7 +146,7 @@ function descriptionRawScore(entry: ApiEntry): number {
 }
 
 function getModelScoreCacheKey(entry: ApiEntry): string {
-  return entry.model.trim().toLowerCase();
+  return `${entry.model.trim().toLowerCase()}::${entry.release_date || ''}::${entry.display_name || ''}`;
 }
 
 function calculateModelRawScore(entry: ApiEntry): number {
@@ -867,13 +867,6 @@ const handleToggleIntent = useCallback(async (entry: ApiEntry, enabled: boolean,
     const results: Record<string, string> = {};
     const errorDetails: Record<string, string> = {};
     const modelScoreCache = new Map<string, number>();
-    const scoreById: Record<string, number> = Object.fromEntries(scopedEntries.map((entry) => [entry.id, entry.score || 0]));
-    const refreshScoreOrder = () => {
-      const orderedIds = [...scopedEntries]
-        .sort((a, b) => (scoreById[b.id] || 0) - (scoreById[a.id] || 0))
-        .map((entry) => entry.id);
-      setLocalOrder(orderedIds);
-    };
     let completed = 0;
     const total = scopedEntries.length;
     setTestProgress({ current: 0, total });
@@ -899,7 +892,7 @@ const handleToggleIntent = useCallback(async (entry: ApiEntry, enabled: boolean,
             modelScoreCache.set(cacheKey, modelScore);
           }
           const result = await adapter.pool.testLatency(entry.id, modelScore);
-          scoreById[entry.id] = result.score;
+
           if (result.latency_ms !== null) {
             results[entry.id] = result.latency_ms.toString();
           } else {
@@ -919,15 +912,10 @@ const handleToggleIntent = useCallback(async (entry: ApiEntry, enabled: boolean,
         setTestProgress({ current: completed, total });
         setTestResults({ ...results });
         setTestErrorDetails({ ...errorDetails });
-        refreshScoreOrder();
+
       }
     };
     await Promise.all([...grouped.values()].map(testChannel));
-    const orderedIds = [...scopedEntries]
-      .sort((a, b) => (scoreById[b.id] || 0) - (scoreById[a.id] || 0))
-      .map((entry) => entry.id);
-    setLocalOrder(orderedIds);
-    await adapter.pool.reorder(orderedIds);
     setTestingEntryIds(new Set());
     setTestResults({});
     setTestErrorDetails({});
@@ -1112,4 +1100,6 @@ const handleToggleIntent = useCallback(async (entry: ApiEntry, enabled: boolean,
     </div>
   );
 }
+
+
 

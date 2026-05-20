@@ -417,6 +417,16 @@ impl Database {
         Ok(())
     }
 
+    pub fn update_entry_sort_index(&self, id: &str, sort_index: i32) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute(
+            "UPDATE api_entries SET sort_index = ?1, updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![sort_index, chrono::Utc::now().timestamp(), id],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
     pub fn backfill_entry_catalog_meta(
         &self,
         items: &[EntryCatalogMetaInput],

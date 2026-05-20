@@ -223,6 +223,7 @@ pub async fn test_entry_latency(
     let update_score = |response_ms: &str| -> f64 {
         let score = calculate_entry_score(model_score, &channel.response_ms, response_ms);
         let _ = db.update_entry_score(entry_id, score);
+        let _ = db.update_entry_sort_index(entry_id, (100.0 - score.round()) as i32);
         score
     };
 
@@ -245,10 +246,9 @@ pub async fn test_entry_latency(
         Err(e) => {
             let message = format!("HTTP client: {e}");
             let _ = db.update_entry_response_ms(entry_id, "X");
-            let _ = db.update_entry_score(
-                entry_id,
-                calculate_entry_score(model_score, &channel.response_ms, "X"),
-            );
+            let new_score = calculate_entry_score(model_score, &channel.response_ms, "X");
+            let _ = db.update_entry_score(entry_id, new_score);
+            let _ = db.update_entry_sort_index(entry_id, (100.0 - new_score.round()) as i32);
             let _ = db.toggle_entry(entry_id, false);
             insert_test_usage_log(
                 db,

@@ -130,7 +130,7 @@ pub fn run() {
 
             // Auto-start proxy if proxy_enabled is set
             let handle = app.handle().clone();
-            tauri::async_runtime::block_on(async {
+            tauri::async_runtime::spawn(async move {
                 let app_state = handle.state::<AppState>();
                 let settings = app_state.settings.read().await.clone();
                 let admin_router = admin::build_combined_router(
