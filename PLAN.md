@@ -1,7 +1,7 @@
 ﻿# API Switch - 项目计划书
 
 > Personal AI API Gateway & Management Center
-> 版本: 0.6.55 | 更新日期: 2026-05-20
+> 版本: 0.6.58 | 更新日期: 2026-05-20
 
 ---
 

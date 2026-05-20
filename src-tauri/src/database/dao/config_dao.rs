@@ -14,6 +14,7 @@ pub struct AppSettings {
     pub circuit_disable_codes: String,
     pub circuit_retry_codes: String,
     pub disable_keywords: String,
+    pub keyword_freeze_scope: String,
     pub locale: String,
     pub theme: String,
     pub autostart: bool,
@@ -43,6 +44,7 @@ impl Default for AppSettings {
             circuit_disable_codes: "401,403,410".to_string(),
             circuit_retry_codes: "100-199,300-399,401-407,409-499,500-503,505-523,525-599".to_string(),
             disable_keywords: "Your credit balance is too low\nThis organization has been disabled.\nYou exceeded your current quota\nPermission denied\nThe security token included in the request is invalid\nOperation not allowed\nYour account is not authorized\ninsufficient_quota\nquota_exceeded_error\ntoken plan limit exhausted\nUpstream rate limit exceeded\ninvalid api key\nUnauthorized - Invalid token".to_string(),
+            keyword_freeze_scope: "model".to_string(),
             autostart: false,
             start_minimized: false,
             show_guide: true,
@@ -101,6 +103,9 @@ impl Database {
         }
         if let Some(v) = kv.get("disable_keywords") {
             settings.disable_keywords = v.clone();
+        }
+        if let Some(v) = kv.get("keyword_freeze_scope") {
+            settings.keyword_freeze_scope = v.clone();
         }
         if let Some(v) = kv.get("locale") {
             settings.locale = v.clone();
@@ -181,6 +186,7 @@ impl Database {
             ("circuit_disable_codes", &updates.circuit_disable_codes),
             ("circuit_retry_codes", &updates.circuit_retry_codes),
             ("disable_keywords", &updates.disable_keywords),
+            ("keyword_freeze_scope", &updates.keyword_freeze_scope),
             ("locale", &updates.locale),
             ("theme", &updates.theme),
             ("autostart", if updates.autostart { "1" } else { "0" }),

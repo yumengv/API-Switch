@@ -423,8 +423,12 @@
       "disableDesc": "Immediately return error without retry or circuit-break. Supports single codes or ranges (inclusive), comma-separated",
       "retryCodes": "Auto-Retry Status Codes",
       "retryDesc": "Failover to next provider on these status codes. Supports single codes or ranges (inclusive), comma-separated; 504 and 524 are never retried regardless",
-      "disableKeywords": "Channel Freeze Keywords",
-      "disableKeywordsDesc": "When an upstream error contains any keyword (case-insensitive), all models under the same channel are temporarily frozen for 6 hours. Only cooldown time is written; entries are not permanently disabled. One keyword per line"
+      "disableKeywords": "Error Keywords",
+      "disableKeywordsDesc": "When an upstream error contains any keyword (case-insensitive), the current model is cooled down (no channel freeze). Upstream includes relay stations where channel-level freeze would block other providers. One keyword per line",
+      "keywordFreezeScope": "Keyword Freeze Scope",
+      "keywordFreezeScopeDesc": "Choose how keyword-matched upstream errors affect the channel: model-level cools only the current model; channel-level freezes all models in the same channel for 6 hours",
+      "keywordFreezeScopeModel": "Model Level (recommended)",
+      "keywordFreezeScopeChannel": "Channel Level"
     },
     "tray": {
       "title": "System Tray",

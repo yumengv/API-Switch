@@ -423,8 +423,12 @@
       "disableDesc": "匹配到该状态码时立即返回错误，不重试、不熔断。支持填写单个状态码或范围（含首尾），使用逗号分隔",
       "retryCodes": "自动重试状态码",
       "retryDesc": "匹配到该状态码时会尝试下一个供应商。支持填写单个状态码或范围（含首尾），使用逗号分隔；504 和 524 始终不重试，不受此处配置影响",
-      "disableKeywords": "渠道冷冻关键词",
-      "disableKeywordsDesc": "当上游错误包含这些关键词时（不区分大小写），同一渠道下所有模型会临时冷冻 6 小时；只写入冷却时间，不永久禁用，每行一个关键词"
+      "disableKeywords": "错误关键词匹配",
+      "disableKeywordsDesc": "当上游错误包含这些关键词时（不区分大小写），当前模型会被冷却（不冻结合道）。上游包含中转站，渠道冻结会误杀其他提供商。每行一个关键词",
+      "keywordFreezeScope": "关键字冻结范围",
+      "keywordFreezeScopeDesc": "选择关键字匹配时的作用范围：模型级仅冷却当前模型；渠道级冻结同渠道所有模型 6 小时",
+      "keywordFreezeScopeModel": "模型级（推荐）",
+      "keywordFreezeScopeChannel": "渠道级"
     },
     "tray": {
       "title": "系统托盘",

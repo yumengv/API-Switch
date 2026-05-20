@@ -561,20 +561,24 @@ pub async fn forward_with_retry(
                 // Connection failures report status=0 and must remain recoverable.
                 let disable_by_status = status > 0
                     && should_disable_entry_for_status(&settings.circuit_disable_codes, status);
-let effective_keywords = if settings.disable_keywords.trim().is_empty() {
-        // 默认关键词，用于没有自定义关键词的情况
-        "Your credit balance is too low\nThis organization has been disabled.\nYou exceeded your current quota\nPermission denied\nThe security token included in the request is invalid\nOperation not allowed\nYour account is not authorized\ninsufficient_quota\nquota_exceeded_error\ntoken plan limit exhausted\nUpstream rate limit exceeded\ninvalid api key\nUnauthorized - Invalid token"
-    } else {
-        &settings.disable_keywords
-    };
-    let disable_by_keyword = status > 0 && should_disable_entry_for_message(effective_keywords, &e);
+                let effective_keywords = if settings.disable_keywords.trim().is_empty() {
+                    // 默认关键词，用于没有自定义关键词的情况
+                    "Your credit balance is too low\nThis organization has been disabled.\nYou exceeded your current quota\nPermission denied\nThe security token included in the request is invalid\nOperation not allowed\nYour account is not authorized\ninsufficient_quota\nquota_exceeded_error\ntoken plan limit exhausted\nUpstream rate limit exceeded\ninvalid api key\nUnauthorized - Invalid token"
+                } else {
+                    &settings.disable_keywords
+                };
+                let disable_by_keyword = status > 0 && should_disable_entry_for_message(effective_keywords, &e);
 
                 if disable_by_keyword {
-                    log::warn!(
-                        "Freezing channel {} for 6h because entry {} matched upstream error keyword, status={}: {}",
-                        entry.channel_id, entry.id, status, e
+                    log::info!(
+                        "Cooldown entry {} (keyword match), status={}: {}",
+                        entry.id, status, e
                     );
-                    freeze_channel_entries(state, entry).await;
+                    if settings.keyword_freeze_scope == "channel" {
+                        freeze_channel_entries(state, entry).await;
+                    } else {
+                        cool_down_entry(state, entry).await;
+                    }
                 } else if disable_by_status {
                     disable_entry(state, entry).await;
                 } else {

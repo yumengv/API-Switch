@@ -168,6 +168,7 @@ pub fn create_tables(conn: &Connection) -> Result<(), AppError> {
         ("circuit_disable_codes", "401,403,410"),
         ("circuit_retry_codes", "100-199,300-399,401-407,409-499,500-503,505-523,525-599"),
         ("disable_keywords", "Your credit balance is too low\nThis organization has been disabled.\nYou exceeded your current quota\nPermission denied\nThe security token included in the request is invalid\nOperation not allowed\nYour account is not authorized\ninsufficient_quota\nquota_exceeded_error\ntoken plan limit exhausted\nUpstream rate limit exceeded\ninvalid api key\nUnauthorized - Invalid token"),
+        ("keyword_freeze_scope", "model"),
         ("locale", "zh"),
         ("theme", "light"),
         ("show_guide", "1"),

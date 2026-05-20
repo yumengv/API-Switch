@@ -188,6 +188,24 @@ export function SettingsEditor({
             />
             <p className="text-xs text-muted-foreground">{t("settings.circuit.disableKeywordsDesc")}</p>
           </div>
+          <div className="flex items-center justify-between">
+            <div>
+              <Label>{t("settings.circuit.keywordFreezeScope")}</Label>
+              <p className="text-xs text-muted-foreground">{t("settings.circuit.keywordFreezeScopeDesc")}</p>
+            </div>
+            <Select
+              value={s.keyword_freeze_scope}
+              onValueChange={(value) => onChange("keyword_freeze_scope", value)}
+            >
+              <SelectTrigger className="w-44">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="model">{t("settings.circuit.keywordFreezeScopeModel")}</SelectItem>
+                <SelectItem value="channel">{t("settings.circuit.keywordFreezeScopeChannel")}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </CardContent>
       </Card>
 
