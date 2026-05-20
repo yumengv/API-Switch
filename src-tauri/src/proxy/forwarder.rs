@@ -605,6 +605,13 @@ async fn forward_single(
     let mut upstream_body = body.clone();
     adapter.transform_request(&mut upstream_body, &entry.model);
 
+    // Normalize reasoning fields in request messages (reasoning_content ↔ reasoning_text)
+    if let Some(messages) = upstream_body.get_mut("messages").and_then(|m| m.as_array_mut()) {
+        for msg in messages.iter_mut() {
+            normalize_reasoning_fields(msg);
+        }
+    }
+
     // Call middleware on_request
     let ctx = RequestContext {
         caller_kind: caller_kind.clone(),
@@ -681,6 +688,16 @@ async fn forward_single(
             .map_err(|e| (format!("Failed to parse response: {e}"), 502))?;
 
         adapter.transform_response(&mut response_body);
+
+        // Normalize reasoning fields in response messages (reasoning_content ↔ reasoning_text)
+        if let Some(choices) = response_body.get_mut("choices").and_then(|c| c.as_array_mut()) {
+            for choice in choices.iter_mut() {
+                if let Some(message) = choice.get_mut("message") {
+                    normalize_reasoning_fields(message);
+                }
+            }
+        }
+
         for mw in middleware.iter() {
             mw.on_response_complete(&mut response_body, &ctx);
         }
@@ -1037,6 +1054,9 @@ fn build_streaming_response(
                             &has_tool_calls,
                             append_model_info.then_some(entry.model.as_str()),
                             &mut done_state) {
+                            // Normalize reasoning fields in model-info-injected chunk
+                            let with_model_info = normalize_reasoning_in_sse_chunk(&with_model_info)
+                                .unwrap_or(with_model_info);
                             if let Ok(mut chunk_text) = String::from_utf8(with_model_info.to_vec())
                             {
                                 for mw in &middleware {
@@ -1046,9 +1066,10 @@ fn build_streaming_response(
                             }
                             return Poll::Ready(Some(Ok(with_model_info)));
                         }
+                        // Normalize reasoning fields in raw SSE chunk (passthrough)
+                        let chunk = normalize_reasoning_in_sse_chunk(&chunk).unwrap_or(chunk);
+                        return Poll::Ready(Some(Ok(chunk)));
                     }
-
-                    Poll::Ready(Some(Ok(chunk)))
                 }
                 Poll::Ready(Some(Err(err))) => {
                     if !logged.swap(true, Ordering::SeqCst) {
@@ -1263,6 +1284,69 @@ fn stream_chunk_has_text_delta(value: &Value) -> bool {
                 .and_then(Value::as_str)
                 .is_some_and(|content| !content.is_empty())
         })
+}
+
+/// 在 message / delta 级别补全缺少的 reasoning 字段。
+/// - 有 `reasoning_content` 无 `reasoning_text` → 补 `reasoning_text`
+/// - 有 `reasoning_text` 无 `reasoning_content` → 补 `reasoning_content`
+fn normalize_reasoning_fields(value: &mut Value) {
+    let obj = match value.as_object_mut() {
+        Some(obj) => obj,
+        None => return,
+    };
+    if let Some(rc) = obj.get("reasoning_content").cloned() {
+        if !obj.contains_key("reasoning_text") {
+            obj.insert("reasoning_text".into(), rc);
+        }
+    } else if let Some(rt) = obj.get("reasoning_text").cloned() {
+        if !obj.contains_key("reasoning_content") {
+            obj.insert("reasoning_content".into(), rt);
+        }
+    }
+}
+
+/// 扫描 SSE chunk 字节中的 `reasoning_content` / `reasoning_text` delta 字段，
+/// 补全缺少的对应字段。返回 `Some(modified_bytes)` 如果有任何修改。
+fn normalize_reasoning_in_sse_chunk(chunk: &Bytes) -> Option<Bytes> {
+    let text = std::str::from_utf8(chunk).ok()?;
+    if !text.contains("reasoning_content") && !text.contains("reasoning_text") {
+        return None;
+    }
+
+    let mut output = Vec::with_capacity(chunk.len() + 256);
+    let mut changed = false;
+
+    for line in text.split_inclusive('\n') {
+        let check = line.trim_end();
+        if let Some(payload) = check.strip_prefix("data: ") {
+            if let Ok(mut val) = serde_json::from_str::<Value>(payload) {
+                let before = val.clone();
+                if let Some(choices) = val.get_mut("choices").and_then(|c| c.as_array_mut()) {
+                    for choice in choices {
+                        if let Some(delta) = choice.get_mut("delta") {
+                            normalize_reasoning_fields(delta);
+                        }
+                    }
+                }
+                if val != before {
+                    if let Ok(modified) = serde_json::to_string(&val) {
+                        output.extend_from_slice(b"data: ");
+                        output.extend_from_slice(modified.as_bytes());
+                        if line.ends_with("\r\n") {
+                            output.extend_from_slice(b"\r\n");
+                        } else {
+                            output.push(b'\n');
+                        }
+                        changed = true;
+                        continue;
+                    }
+                }
+            }
+        }
+        output.extend_from_slice(line.as_bytes());
+    }
+
+    changed.then_some(Bytes::from(output))
 }
 
 fn stream_chunk_has_model_info_delta(value: &Value, model: &str) -> bool {

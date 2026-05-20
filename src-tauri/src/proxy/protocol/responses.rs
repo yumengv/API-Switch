@@ -333,12 +333,24 @@ pub fn responses_to_openai_chat_request(req_body: &Value) -> (Value, bool, Strin
         "stream": is_stream,
     });
 
+    // Reasoning: Responses API 的 reasoning 对象 → Chat API 的扁平字段
+    if let Some(reasoning) = req_body.get("reasoning").and_then(|v| v.as_object()) {
+        if let Some(effort) = reasoning.get("effort").and_then(|v| v.as_str()) {
+            chat_body["reasoning_effort"] = json!(effort);
+        }
+    }
+
+    // text.format → response_format（Responses→Chat 反向映射）
+    if let Some(text_obj) = req_body.get("text").and_then(|v| v.as_object()) {
+        if let Some(format) = text_obj.get("format") {
+            chat_body["response_format"] = format.clone();
+        }
+    }
+
     for field in [
         ("temperature", "temperature"),
         ("top_p", "top_p"),
-        ("reasoning", "reasoning"),
         ("service_tier", "service_tier"),
-        ("text", "text"),
         ("top_logprobs", "top_logprobs"),
         ("stream_options", "stream_options"),
         ("max_tool_calls", "max_tool_calls"),
@@ -371,7 +383,7 @@ pub fn responses_to_openai_chat_request(req_body: &Value) -> (Value, bool, Strin
                 continue;
             }
             // Skip fields already consumed by Responses→Chat conversion
-            if key == "input" || key == "instructions" {
+            if key == "input" || key == "instructions" || key == "reasoning" || key == "text" {
                 continue;
             }
             chat_obj.insert(key.clone(), value.clone());
@@ -1214,6 +1226,11 @@ fn transform_request_to_responses(body: &mut Value, actual_model: &str) {
     // response_format → text.format（官方文档中的对应关系）
     if let Some(rf) = obj.remove("response_format") {
         responses.insert("text".to_string(), json!({ "format": rf }));
+    }
+
+    // reasoning_effort: Chat API 的扁平字段 → Responses 的 reasoning 对象
+    if let Some(effort) = obj.remove("reasoning_effort") {
+        responses.insert("reasoning".to_string(), json!({ "effort": effort }));
     }
 
     // 4. 其他已知字段直接拷贝（Responses API 也支持）
