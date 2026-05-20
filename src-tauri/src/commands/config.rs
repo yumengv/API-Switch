@@ -32,7 +32,6 @@ async fn restart_proxy_if_running(
         state.settings.clone(),
         Some(app.clone()),
         state.failure_counts.clone(),
-        state.dirty.clone(),
     );
     if let Err(error) = new_server.start_with_admin(admin_router).await {
         // Rollback: restore previous settings and restart proxy with old config
@@ -46,7 +45,6 @@ async fn restart_proxy_if_running(
             state.settings.clone(),
             Some(app.clone()),
             state.failure_counts.clone(),
-            state.dirty.clone(),
         );
         let rollback_admin_router = crate::admin::build_combined_router(
             &restored_settings,

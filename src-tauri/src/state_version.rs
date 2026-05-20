@@ -1,21 +1,53 @@
 use serde::Serialize;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-static STATE_VERSION: AtomicU64 = AtomicU64::new(0);
+static LOG_VERSION: AtomicU64 = AtomicU64::new(0);
+static POOL_VERSION: AtomicU64 = AtomicU64::new(0);
+static CHANNEL_VERSION: AtomicU64 = AtomicU64::new(0);
+static TOKEN_VERSION: AtomicU64 = AtomicU64::new(0);
 
-/// 通知前端状态已变更。每次数据写入后调用。
-/// 前端轮询此值，变化时自动刷新 UI。
-pub fn bump() {
-    STATE_VERSION.fetch_add(1, Ordering::Release);
+fn version_ref(module: &str) -> &AtomicU64 {
+    match module {
+        "log" => &LOG_VERSION,
+        "pool" => &POOL_VERSION,
+        "channel" => &CHANNEL_VERSION,
+        "token" => &TOKEN_VERSION,
+        _ => panic!("Unknown module: {module}"),
+    }
 }
 
-/// 返回当前版本号（供 HTTP handler 调用）
-pub fn current() -> u64 {
-    STATE_VERSION.load(Ordering::Acquire)
+/// 递增指定模块的版本号。每次数据写入后调用。
+pub fn bump(module: &str) {
+    version_ref(module).fetch_add(1, Ordering::Release);
 }
 
-/// 版本号响应结构体
+/// 返回指定模块的当前版本号
+pub fn current(module: &str) -> u64 {
+    version_ref(module).load(Ordering::Acquire)
+}
+
+/// 返回所有模块的版本号（供 HTTP handler 使用）
+pub fn all() -> HashMap<&'static str, u64> {
+    let mut m = HashMap::new();
+    m.insert("log", LOG_VERSION.load(Ordering::Acquire));
+    m.insert("pool", POOL_VERSION.load(Ordering::Acquire));
+    m.insert("channel", CHANNEL_VERSION.load(Ordering::Acquire));
+    m.insert("token", TOKEN_VERSION.load(Ordering::Acquire));
+    m
+}
+
+/// 所有模块的版本号响应结构体
+#[derive(Debug, Clone, Serialize)]
+pub struct StatVersionsResponse {
+    pub log: u64,
+    pub pool: u64,
+    pub channel: u64,
+    pub token: u64,
+}
+
+/// 单模块的版本号响应结构体（用于 Tauri command）
 #[derive(Debug, Clone, Copy, Serialize)]
-pub struct StateVersionResponse {
+pub struct StatVersionResponse {
     pub version: u64,
 }

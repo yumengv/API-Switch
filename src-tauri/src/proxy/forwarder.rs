@@ -56,8 +56,7 @@ fn is_completed_stream_success(
     has_sse_error: bool,
     has_text_delta: bool,
     has_tool_calls: bool,
-    completion_tokens: i64,
-) -> bool {
+    completion_tokens: i64) -> bool {
     // 仅在 HTTP 200、无 SSE 错误且存在有效输出时判定成功。
     // 有效输出定义为：出现文本 delta、出现工具调用、或返回的 completion_tokens>0。
     status_code == 200 && !has_sse_error && (has_text_delta || has_tool_calls || completion_tokens > 0)
@@ -74,8 +73,7 @@ fn is_recoverable_decode_timeout_after_stream_started(
     has_sse_error: bool,
     is_timeout: bool,
     is_decode: bool,
-    is_body: bool,
-) -> bool {
+    is_body: bool) -> bool {
     let stream_started = status_code == 200
         && (first_token_ms > 0 || chunk_count > 0 || streamed_bytes > 0);
     let has_valid_output = has_text_delta || has_tool_calls || completion_tokens > 0;
@@ -100,8 +98,7 @@ fn is_decode_timeout_after_stream_started(
     has_text_delta: bool,
     has_tool_calls: bool,
     completion_tokens: i64,
-    has_sse_error: bool,
-) -> bool {
+    has_sse_error: bool) -> bool {
     is_recoverable_decode_timeout_after_stream_started(
         status_code,
         first_token_ms,
@@ -113,8 +110,7 @@ fn is_decode_timeout_after_stream_started(
         has_sse_error,
         err.is_timeout(),
         err.is_decode(),
-        err.is_body(),
-    )
+        err.is_body())
 }
 
 /// 判断客户端断开的流是否算成功。
@@ -124,8 +120,7 @@ fn is_decode_timeout_after_stream_started(
 fn is_dropped_stream_success(
     status_code: i32,
     _prompt_tokens: i64,
-    _completion_tokens: i64,
-) -> bool {
+    _completion_tokens: i64) -> bool {
     status_code == 200
 }
 
@@ -153,8 +148,7 @@ fn attempt_path_json(attempts: &[AttemptInfo]) -> String {
                     "error": a.error,
                 })
             })
-            .collect::<Vec<_>>(),
-    )
+            .collect::<Vec<_>>())
     .unwrap_or_else(|_| "[]".to_string())
 }
 
@@ -163,8 +157,7 @@ fn push_attempt(
     entry: &ApiEntry,
     status_code: i32,
     success: bool,
-    error: Option<String>,
-) {
+    error: Option<String>) {
     attempts.push(AttemptInfo {
         entry_id: entry.id.clone(),
         channel_name: entry
@@ -183,8 +176,7 @@ fn attempt_path_with_current(
     entry: &ApiEntry,
     status_code: i32,
     success: bool,
-    error: Option<String>,
-) -> String {
+    error: Option<String>) -> String {
     let mut attempts = prior_attempts.to_vec();
     push_attempt(&mut attempts, entry, status_code, success, error);
     attempt_path_json(&attempts)
@@ -232,8 +224,7 @@ fn build_stream_diagnostic(
     has_text_delta: bool,
     has_tool_calls: bool,
     has_sse_error: bool,
-    stream_success: Option<bool>,
-) -> String {
+    stream_success: Option<bool>) -> String {
     let has_valid_output = has_text_delta || has_tool_calls || completion_tokens > 0;
     let detail = serde_json::json!({
         "stage": stage,
@@ -338,7 +329,6 @@ struct ForwardResult {
 /// Primary log writing happens in Poll::Ready(None) — this guard is fallback only.
 struct StreamLogGuard {
     logged: Arc<AtomicBool>,
-    dirty: Arc<crate::dirty::DirtyFlags>,
     db: Arc<Database>,
     app_handle: Option<tauri::AppHandle>,
     access_key: Option<AccessKey>,
@@ -374,8 +364,7 @@ impl Drop for StreamLogGuard {
                 &self.entry,
                 self.status_code,
                 success,
-                None,
-            );
+                None);
             let stream_summary = build_stream_diagnostic(
                 "stream_dropped",
                 None,
@@ -393,19 +382,16 @@ impl Drop for StreamLogGuard {
                 false,
                 false,
                 false,
-                Some(success),
-            );
+                Some(success));
             let db = self.db.clone();
             let app_handle = self.app_handle.clone();
             let access_key = self.access_key.clone();
             let entry = self.entry.clone();
             let requested_model = self.requested_model.clone();
             let status_code = self.status_code;
-            let dirty = self.dirty.clone();
             let empty_stream_cooldown_secs = self.empty_stream_cooldown_secs;
             tokio::spawn(async move {
                 log_usage(
-                    &dirty,
                     &db,
                     &app_handle,
                     access_key.as_ref(),
@@ -420,8 +406,7 @@ impl Drop for StreamLogGuard {
                     success,
                     Some(stream_summary.as_str()),
                     Some(attempt_path.as_str()),
-                    Some(StreamEndReason::Dropped),
-                );
+                    Some(StreamEndReason::Dropped));
 
                 // 空流检测：上游返回 200 但 SSE 流中无实际输出数据。
                 // 此类流被丢弃后，如果仅标记 success=true 不触发冷却，
@@ -437,11 +422,11 @@ impl Drop for StreamLogGuard {
                     let cooldown_until =
                         chrono::Utc::now().timestamp() + empty_stream_cooldown_secs;
                     let _ = db.set_entry_cooldown(&entry.id, Some(cooldown_until));
-                    dirty.mark_pool();
+                    crate::state_version::bump("pool");
                     if let Some(h) = &app_handle {
                         let _ = h.emit("entries-changed", ());
                     }
-                    crate::state_version::bump();
+                    crate::state_version::bump("pool");
                     log::warn!(
                         "Entry {} cooled down for {}s after empty stream drop.",
                         entry.id,
@@ -468,8 +453,7 @@ pub async fn forward_with_retry(
     access_key: Option<&AccessKey>,
     is_stream: bool,
     middleware: &[Arc<dyn super::middleware::ForwarderMiddleware>],
-    caller_kind: CallerKind,
-) -> Result<axum::response::Response, ProxyError> {
+    caller_kind: CallerKind) -> Result<axum::response::Response, ProxyError> {
     let mut last_error: Option<(String, u16)> = None;
     let mut attempts: Vec<AttemptInfo> = Vec::new();
 
@@ -495,8 +479,7 @@ pub async fn forward_with_retry(
             is_stream,
             attempts.clone(),
             middleware,
-            &caller_kind,
-        )
+            &caller_kind)
         .await
         {
             Ok(result) => {
@@ -508,7 +491,6 @@ pub async fn forward_with_retry(
                     let attempt_path = attempt_path_json(&attempts);
                     let latency_ms = elapsed.as_millis() as i64;
                     log_usage(
-                        &state.dirty,
                         &state.db,
                         &state.app_handle,
                         access_key,
@@ -523,8 +505,7 @@ pub async fn forward_with_retry(
                         true,
                         None,
                         Some(attempt_path.as_str()),
-                        None,
-                    );
+                        None);
                 }
                 return Ok(result.response);
             }
@@ -538,7 +519,7 @@ pub async fn forward_with_retry(
 
                 // Step 1: Always write usage log for every failed attempt
                 log_usage(
-                    &state.dirty,
+                    
                     &state.db,
                     &state.app_handle,
                     access_key,
@@ -553,8 +534,7 @@ pub async fn forward_with_retry(
                     false,
                     Some(&e),
                     Some(attempt_path.as_str()),
-                    None,
-                );
+                    None);
 
                 // Step 2: disable unrecoverable status codes or error messages
                 // matching disable keywords; otherwise cool down briefly.
@@ -614,8 +594,7 @@ async fn forward_single(
     is_stream: bool,
     prior_attempts: Vec<AttemptInfo>,
     middleware: &[Arc<dyn super::middleware::ForwarderMiddleware>],
-    caller_kind: &CallerKind,
-) -> Result<ForwardResult, ForwardError> {
+    caller_kind: &CallerKind) -> Result<ForwardResult, ForwardError> {
     let channel = state
         .db
         .get_channel(&entry.channel_id)
@@ -688,8 +667,7 @@ async fn forward_single(
             prior_attempts,
             append_model_info,
             middleware,
-            &ctx,
-        );
+            &ctx);
         Ok(ForwardResult {
             response,
             prompt_tokens: 0,
@@ -712,8 +690,7 @@ async fn forward_single(
         if !nonstream_response_has_valid_output(&response_body) {
             return Err((
                 "upstream HTTP 200 completed without valid output".to_string(),
-                502,
-            ));
+                502));
         }
 
         Ok(ForwardResult {
@@ -804,8 +781,7 @@ fn request_uses_tool_calling(body: &Value) -> bool {
 fn should_append_model_info(
     state: &ProxyState,
     body: &Value,
-    _caller_kind: &super::middleware::CallerKind,
-) -> bool {
+    _caller_kind: &super::middleware::CallerKind) -> bool {
     // Responses 协议自带原生 `response.model` 字段，绝不能向 output_text 正文
     // 追加 `model: xxx`，否则会污染客户端的 output_text。P5 修复。
 
@@ -842,8 +818,7 @@ fn build_streaming_response(
     prior_attempts: Vec<AttemptInfo>,
     append_model_info: bool,
     middleware: &[Arc<dyn super::middleware::ForwarderMiddleware>],
-    ctx: &RequestContext,
-) -> axum::response::Response {
+    ctx: &RequestContext) -> axum::response::Response {
     let response_headers = response.headers().clone();
     let upstream_url = upstream_url.to_string();
     let start = request_start;
@@ -877,7 +852,6 @@ fn build_streaming_response(
     let entries_app_handle = state.app_handle.clone();
     let success_circuit_breakers = state.circuit_breakers.clone();
     let success_failure_counts = state.failure_counts.clone();
-    let dirty_flags = state.dirty.clone();
 
     // 读取 settings 中的冷却时长，用于空流检测冷却
     let empty_stream_cooldown_secs: i64 = state
@@ -889,7 +863,6 @@ fn build_streaming_response(
     // Guard captured by the move closure → lives as long as the stream body
     let guard = StreamLogGuard {
         logged: logged.clone(),
-        dirty: state.dirty.clone(),
         db: db.clone(),
         app_handle: app_handle.clone(),
         access_key: access_key.clone(),
@@ -927,8 +900,7 @@ fn build_streaming_response(
                         &entry,
                         504,
                         false,
-                        Some("stream idle timeout".to_string()),
-                    );
+                        Some("stream idle timeout".to_string()));
                     let db2 = db.clone();
                     let ah2 = app_handle.clone();
                     let ak2 = access_key.clone();
@@ -938,10 +910,8 @@ fn build_streaming_response(
                     let ct = completion_tokens.load(Ordering::SeqCst);
                     let ft = first_token_ms.load(Ordering::SeqCst);
                     let lat = start.elapsed().as_millis() as i64;
-                    let dirty2 = dirty_flags.clone();
                     tokio::spawn(async move {
                         log_usage(
-                            &dirty2,
                             &db2,
                             &ah2,
                             ak2.as_ref(),
@@ -956,8 +926,7 @@ fn build_streaming_response(
                             false,
                             Some("stream idle timeout"),
                             Some(attempt_path.as_str()),
-                            Some(StreamEndReason::Timeout),
-                        );
+                            Some(StreamEndReason::Timeout));
                     });
                     spawn_cool_down_entry(
                         circuit_breakers.clone(),
@@ -965,14 +934,11 @@ fn build_streaming_response(
                         settings_cache.clone(),
                         db.clone(),
                         entries_app_handle.clone(),
-                        entry_id.clone(),
-                        dirty_flags.clone(),
-                    );
+                        entry_id.clone());
                 }
                 return Poll::Ready(Some(Err(std::io::Error::new(
                     std::io::ErrorKind::TimedOut,
-                    "stream idle timeout",
-                ))));
+                    "stream idle timeout"))));
             }
 
             match upstream_stream.as_mut().poll_next(cx) {
@@ -989,16 +955,14 @@ fn build_streaming_response(
                     if super::sse::stream_buffer_exceeded(
                         &sse_buffer,
                         &sse_utf8_remainder,
-                        streamed_bytes.load(Ordering::SeqCst) as usize,
-                    ) {
+                        streamed_bytes.load(Ordering::SeqCst) as usize) {
                         if !logged.swap(true, Ordering::SeqCst) {
                             let attempt_path = attempt_path_with_current(
                                 &prior_attempts,
                                 &entry,
                                 413,
                                 false,
-                                Some("stream buffer exceeds 10MB limit".to_string()),
-                            );
+                                Some("stream buffer exceeds 10MB limit".to_string()));
                             let db2 = db.clone();
                             let ah2 = app_handle.clone();
                             let ak2 = access_key.clone();
@@ -1008,10 +972,8 @@ fn build_streaming_response(
                             let ct = completion_tokens.load(Ordering::SeqCst);
                             let ft = first_token_ms.load(Ordering::SeqCst);
                             let lat = start.elapsed().as_millis() as i64;
-                            let dirty2 = dirty_flags.clone();
                             tokio::spawn(async move {
                                 log_usage(
-                                    &dirty2,
                                     &db2,
                                     &ah2,
                                     ak2.as_ref(),
@@ -1026,8 +988,7 @@ fn build_streaming_response(
                                     false,
                                     Some("stream buffer exceeds 10MB limit"),
                                     Some(attempt_path.as_str()),
-                                    Some(StreamEndReason::Dropped),
-                                );
+                                    Some(StreamEndReason::Dropped));
                             });
                             spawn_cool_down_entry(
                                 circuit_breakers.clone(),
@@ -1035,14 +996,11 @@ fn build_streaming_response(
                                 settings_cache.clone(),
                                 db.clone(),
                                 entries_app_handle.clone(),
-                                entry_id.clone(),
-                                dirty_flags.clone(),
-                            );
+                                entry_id.clone());
                         }
                         return Poll::Ready(Some(Err(std::io::Error::new(
                             std::io::ErrorKind::Other,
-                            "stream buffer exceeds 10MB limit",
-                        ))));
+                            "stream buffer exceeds 10MB limit"))));
                     }
 
                     if needs_transform {
@@ -1056,8 +1014,7 @@ fn build_streaming_response(
                             &has_text_delta,
                             &has_tool_calls,
                             append_model_info.then_some(entry.model.as_str()),
-                            &mut done_state,
-                        ) {
+                            &mut done_state) {
                             if let Ok(mut chunk_text) = String::from_utf8(transformed.to_vec()) {
                                 for mw in &middleware {
                                     mw.on_sse_chunk(&mut chunk_text, ctx.as_ref());
@@ -1080,8 +1037,7 @@ fn build_streaming_response(
                             &has_text_delta,
                             &has_tool_calls,
                             append_model_info.then_some(entry.model.as_str()),
-                            &mut done_state,
-                        ) {
+                            &mut done_state) {
                             if let Ok(mut chunk_text) = String::from_utf8(with_model_info.to_vec())
                             {
                                 for mw in &middleware {
@@ -1115,8 +1071,7 @@ fn build_streaming_response(
                             has_text_output,
                             has_tool_output,
                             ct,
-                            has_error,
-                        );
+                            has_error);
                         let stream_end_reason = if suppress_cooldown {
                             StreamEndReason::DecodeTimeout
                         } else {
@@ -1139,25 +1094,21 @@ fn build_streaming_response(
                             has_text_output,
                             has_tool_output,
                             has_error,
-                            Some(false),
-                        );
+                            Some(false));
                         let error_message = format!("Stream error: {err}\n{diagnostic}");
                         let attempt_path = attempt_path_with_current(
                             &prior_attempts,
                             &entry,
                             502,
                             false,
-                            Some(error_message.clone()),
-                        );
+                            Some(error_message.clone()));
                         let db2 = db.clone();
                         let ah2 = app_handle.clone();
                         let ak2 = access_key.clone();
                         let e2 = entry.clone();
                         let rm2 = requested_model.clone();
-                        let dirty2 = dirty_flags.clone();
                         tokio::spawn(async move {
                             log_usage(
-                                &dirty2,
                                 &db2,
                                 &ah2,
                                 ak2.as_ref(),
@@ -1172,8 +1123,7 @@ fn build_streaming_response(
                                 false,
                                 Some(error_message.as_str()),
                                 Some(attempt_path.as_str()),
-                                Some(stream_end_reason),
-                            );
+                                Some(stream_end_reason));
                         });
                         if !suppress_cooldown {
                             spawn_cool_down_entry(
@@ -1182,15 +1132,12 @@ fn build_streaming_response(
                                 settings_cache.clone(),
                                 db.clone(),
                                 entries_app_handle.clone(),
-                                entry_id.clone(),
-                                dirty_flags.clone(),
-                            );
+                                entry_id.clone());
                         }
                     }
                     Poll::Ready(Some(Err(std::io::Error::new(
                         std::io::ErrorKind::Other,
-                        err,
-                    ))))
+                        err))))
                 }
                 Poll::Ready(None) => {
                     if !logged.swap(true, Ordering::SeqCst) {
@@ -1208,8 +1155,7 @@ fn build_streaming_response(
                             has_error,
                             has_text_output,
                             has_tool_output,
-                            ct,
-                        );
+                            ct);
                         let failure_reason = if success {
                             None
                         } else if has_error {
@@ -1222,8 +1168,7 @@ fn build_streaming_response(
                             &entry,
                             status_code,
                             success,
-                            failure_reason.clone(),
-                        );
+                            failure_reason.clone());
                         let stream_summary = build_stream_diagnostic(
                             "stream_complete",
                             None,
@@ -1241,8 +1186,7 @@ fn build_streaming_response(
                             has_text_output,
                             has_tool_output,
                             has_error,
-                            Some(success),
-                        );
+                            Some(success));
                         let log_message = failure_reason
                             .as_ref()
                             .map(|reason| format!("{reason}\n{stream_summary}"))
@@ -1260,10 +1204,8 @@ fn build_streaming_response(
                         let eid = entry_id.clone();
                         let sdb = settings_cache.clone();
                         let eah = entries_app_handle.clone();
-                        let dirty2 = dirty_flags.clone();
                         tokio::spawn(async move {
                             log_usage(
-                                &dirty2,
                                 &db2,
                                 &ah2,
                                 ak2.as_ref(),
@@ -1278,19 +1220,17 @@ fn build_streaming_response(
                                 success,
                                 Some(log_message.as_str()),
                                 Some(attempt_path.as_str()),
-                                Some(StreamEndReason::Done),
-                            );
+                                Some(StreamEndReason::Done));
                             if success {
-                                spawn_record_circuit_success(scb, sfc, sdb, db2.clone(), eah, eid, dirty2.clone());
+                                spawn_record_circuit_success(scb, sfc, sdb, db2.clone(), eah, eid);
                             } else {
-                                spawn_cool_down_entry(scb, sfc, sdb, db2.clone(), eah, eid, dirty2.clone());
+                                spawn_cool_down_entry(scb, sfc, sdb, db2.clone(), eah, eid);
                             }
                         });
                         if let Some(reason) = failure_reason {
                             return Poll::Ready(Some(Err(std::io::Error::new(
                                 std::io::ErrorKind::Other,
-                                reason,
-                            ))));
+                                reason))));
                         }
                     }
                     Poll::Ready(None)
@@ -1302,8 +1242,7 @@ fn build_streaming_response(
     axum::http::Response::builder()
         .status(
             axum::http::StatusCode::from_u16(status_code as u16)
-                .unwrap_or(axum::http::StatusCode::OK),
-        )
+                .unwrap_or(axum::http::StatusCode::OK))
         .header("content-type", "text/event-stream")
         .header("cache-control", "no-cache")
         .header("connection", "keep-alive")
@@ -1403,8 +1342,7 @@ fn transform_sse_chunk(
     has_text_delta: &Arc<AtomicBool>,
     has_tool_calls: &Arc<AtomicBool>,
     model_info: Option<&str>,
-    done_state: &mut SseDoneState,
-) -> Option<Bytes> {
+    done_state: &mut SseDoneState) -> Option<Bytes> {
     super::sse::append_utf8_safe(buffer, remainder, chunk);
     let mut output = Vec::new();
 
@@ -1479,8 +1417,7 @@ fn append_and_parse_sse(
     has_text_delta: &Arc<AtomicBool>,
     has_tool_calls: &Arc<AtomicBool>,
     model_info: Option<&str>,
-    done_state: &mut SseDoneState,
-) -> Option<Bytes> {
+    done_state: &mut SseDoneState) -> Option<Bytes> {
     super::sse::append_utf8_safe(buffer, remainder, chunk);
     let mut saw_done = false;
 
@@ -1609,9 +1546,9 @@ async fn disable_entry(state: &ProxyState, entry: &ApiEntry) {
 
     let _ = state.db.toggle_entry(&entry.id, false);
     let _ = state.db.set_entry_cooldown(&entry.id, Some(cooldown_until));
-    state.dirty.mark_pool();
+    crate::state_version::bump("pool");
     if let Some(h) = &state.app_handle { let _ = h.emit("entries-changed", ()); }
-    crate::state_version::bump();
+    crate::state_version::bump("pool");
     refresh_tray(&state.app_handle);
 
     let mut breakers = state.circuit_breakers.write().await;
@@ -1626,9 +1563,9 @@ async fn freeze_channel_entries(state: &ProxyState, entry: &ApiEntry) {
         .freeze_entries_for_channel(&entry.channel_id, cooldown_until)
     {
         Ok(entry_ids) => {
-            state.dirty.mark_pool();
+            crate::state_version::bump("pool");
             if let Some(h) = &state.app_handle { let _ = h.emit("entries-changed", ()); }
-            crate::state_version::bump();
+            crate::state_version::bump("pool");
             refresh_tray(&state.app_handle);
 
             let mut counts = state.failure_counts.write().await;
@@ -1657,9 +1594,9 @@ async fn freeze_channel_entries(state: &ProxyState, entry: &ApiEntry) {
 async fn record_circuit_success(state: &ProxyState, entry_id: &str) {
 
     let _ = state.db.set_entry_cooldown(entry_id, None);
-    state.dirty.mark_pool();
+    crate::state_version::bump("pool");
     if let Some(h) = &state.app_handle { let _ = h.emit("entries-changed", ()); }
-    crate::state_version::bump();
+    crate::state_version::bump("pool");
     refresh_tray(&state.app_handle);
 
     // Clear failure count
@@ -1692,9 +1629,9 @@ async fn cool_down_entry(state: &ProxyState, entry: &ApiEntry) {
         let six_hours_later = chrono::Utc::now().timestamp() + 21600;
         let _ = state.db.set_entry_cooldown(&entry.id, Some(six_hours_later));
         let _ = state.db.toggle_entry(&entry.id, false);
-        state.dirty.mark_pool();
+        crate::state_version::bump("pool");
         if let Some(h) = &state.app_handle { let _ = h.emit("entries-changed", ()); }
-        crate::state_version::bump();
+        crate::state_version::bump("pool");
         refresh_tray(&state.app_handle);
 
         let mut breakers = state.circuit_breakers.write().await;
@@ -1710,9 +1647,9 @@ async fn cool_down_entry(state: &ProxyState, entry: &ApiEntry) {
 
     let cooldown_until = chrono::Utc::now().timestamp() + recovery_secs as i64;
     let _ = state.db.set_entry_cooldown(&entry.id, Some(cooldown_until));
-    state.dirty.mark_pool();
+    crate::state_version::bump("pool");
     if let Some(h) = &state.app_handle { let _ = h.emit("entries-changed", ()); }
-    crate::state_version::bump();
+    crate::state_version::bump("pool");
     refresh_tray(&state.app_handle);
 
     let mut breakers = state.circuit_breakers.write().await;
@@ -1739,16 +1676,14 @@ fn spawn_record_circuit_success(
     settings: Arc<tokio::sync::RwLock<AppSettings>>,
     db: Arc<Database>,
     app_handle: Option<tauri::AppHandle>,
-    entry_id: String,
-    dirty: Arc<crate::dirty::DirtyFlags>,
-) {
+    entry_id: String) {
     tokio::spawn(async move {
         let recovery_secs = settings.read().await.circuit_recovery_secs as u64;
 
         let _ = db.set_entry_cooldown(&entry_id, None);
-        dirty.mark_pool();
+        crate::state_version::bump("pool");
         if let Some(h) = &app_handle { let _ = h.emit("entries-changed", ()); }
-        crate::state_version::bump();
+        crate::state_version::bump("pool");
         refresh_tray(&app_handle);
 
         // Clear failure count
@@ -1769,9 +1704,7 @@ fn spawn_cool_down_entry(
     settings: Arc<tokio::sync::RwLock<AppSettings>>,
     db: Arc<Database>,
     app_handle: Option<tauri::AppHandle>,
-    entry_id: String,
-    dirty: Arc<crate::dirty::DirtyFlags>,
-) {
+    entry_id: String) {
     tokio::spawn(async move {
         let settings = settings.read().await.clone();
         let threshold = (settings.circuit_failure_threshold as u32).max(1);
@@ -1790,9 +1723,9 @@ fn spawn_cool_down_entry(
             let six_hours_later = chrono::Utc::now().timestamp() + 21600;
             let _ = db.set_entry_cooldown(&entry_id, Some(six_hours_later));
             let _ = db.toggle_entry(&entry_id, false);
-            dirty.mark_pool();
+            crate::state_version::bump("pool");
             if let Some(h) = &app_handle { let _ = h.emit("entries-changed", ()); }
-            crate::state_version::bump();
+            crate::state_version::bump("pool");
             refresh_tray(&app_handle);
 
             let mut breakers = circuit_breakers.write().await;
@@ -1808,9 +1741,9 @@ fn spawn_cool_down_entry(
 
         let cooldown_until = chrono::Utc::now().timestamp() + recovery_secs as i64;
         let _ = db.set_entry_cooldown(&entry_id, Some(cooldown_until));
-        dirty.mark_pool();
+        crate::state_version::bump("pool");
         if let Some(h) = &app_handle { let _ = h.emit("entries-changed", ()); }
-        crate::state_version::bump();
+        crate::state_version::bump("pool");
         refresh_tray(&app_handle);
 
         let mut breakers = circuit_breakers.write().await;
@@ -1831,7 +1764,6 @@ fn spawn_cool_down_entry(
 }
 
 fn log_usage(
-    dirty: &crate::dirty::DirtyFlags,
     db: &Database,
     app_handle: &Option<tauri::AppHandle>,
     access_key: Option<&AccessKey>,
@@ -1846,8 +1778,7 @@ fn log_usage(
     success: bool,
     error_message: Option<&str>,
     attempt_path: Option<&str>,
-    stream_end_reason: Option<StreamEndReason>,
-) {
+    stream_end_reason: Option<StreamEndReason>) {
     let log_type = if success { 2 } else { 5 };
     let content = error_message.unwrap_or("");
     let token_name = access_key.map(|ak| ak.name.as_str()).unwrap_or("NONE");
@@ -1887,13 +1818,12 @@ fn log_usage(
         "default",
         &other,
         error_message,
-        None,
-    ).is_ok() {
-        dirty.mark_log();
+        None).is_ok() {
+        crate::state_version::bump("log");
     }
 
     if let Some(h) = app_handle { let _ = h.emit("new-usage-log", ()); }
-    crate::state_version::bump();
+    crate::state_version::bump("pool");
 }
 
 #[cfg(test)]
@@ -1923,8 +1853,7 @@ data: [DONE]\n"
             &Arc::new(AtomicBool::new(false)),
             &Arc::new(AtomicBool::new(false)),
             None,
-            &mut SseDoneState::default(),
-        )
+            &mut SseDoneState::default())
         .expect("transformed output");
         let output = String::from_utf8(output.to_vec()).expect("valid utf8");
 
@@ -1946,8 +1875,7 @@ data: [DONE]\n"
             false,
             true,
             true,
-            false,
-        ));
+            false));
     }
 
     #[test]
@@ -1963,8 +1891,7 @@ data: [DONE]\n"
             false,
             true,
             true,
-            false,
-        ));
+            false));
     }
 
     #[test]
@@ -1980,8 +1907,7 @@ data: [DONE]\n"
             true,
             true,
             true,
-            false,
-        ));
+            false));
     }
 
     #[test]
@@ -2011,8 +1937,7 @@ data: [DONE]\n"
             &has_text_delta,
             &Arc::new(AtomicBool::new(false)),
             Some("gpt-test"),
-            &mut done_state,
-        );
+            &mut done_state);
 
         assert!(output.is_none());
         assert!(!has_sse_error.load(Ordering::Relaxed));
@@ -2039,8 +1964,7 @@ data: [DONE]\n"
             &has_text_delta,
             &Arc::new(AtomicBool::new(false)),
             Some("gpt-test"),
-            &mut done_state,
-        );
+            &mut done_state);
 
         assert!(output.is_none());
         assert!(has_sse_error.load(Ordering::Relaxed));
@@ -2051,8 +1975,7 @@ data: [DONE]\n"
         let mut buffer = String::new();
         let first_chunk = Bytes::from_static(
             b"data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\
-data: [DONE]\n",
-        );
+data: [DONE]\n");
         let second_chunk = Bytes::from_static(b"data: [DONE]\n");
         let prompt_tokens = Arc::new(AtomicI64::new(0));
         let completion_tokens = Arc::new(AtomicI64::new(0));
@@ -2071,8 +1994,7 @@ data: [DONE]\n",
             &has_text_delta,
             &Arc::new(AtomicBool::new(false)),
             Some("gpt-test"),
-            &mut done_state,
-        )
+            &mut done_state)
         .expect("first done should append model once");
         let second_output = append_and_parse_sse(
             &mut buffer,
@@ -2084,8 +2006,7 @@ data: [DONE]\n",
             &has_text_delta,
             &Arc::new(AtomicBool::new(false)),
             Some("gpt-test"),
-            &mut done_state,
-        );
+            &mut done_state);
 
         let first_text = String::from_utf8(first_output.to_vec()).expect("valid utf8");
         assert_eq!(first_text.matches("model: gpt-test").count(), 1);
@@ -2098,8 +2019,7 @@ data: [DONE]\n",
         let chunk = Bytes::from_static(
             b"data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\
 data: {\"choices\":[{\"delta\":{\"content\":\"\\n\\nmodel: gpt-test\"}}]}\n\
-data: [DONE]\n",
-        );
+data: [DONE]\n");
         let prompt_tokens = Arc::new(AtomicI64::new(0));
         let completion_tokens = Arc::new(AtomicI64::new(0));
         let has_sse_error = Arc::new(AtomicBool::new(false));
@@ -2117,8 +2037,7 @@ data: [DONE]\n",
             &has_text_delta,
             &Arc::new(AtomicBool::new(false)),
             Some("gpt-test"),
-            &mut done_state,
-        );
+            &mut done_state);
 
         let text = String::from_utf8(output.unwrap_or(chunk).to_vec()).expect("valid utf8");
         assert_eq!(text.matches("model: gpt-test").count(), 1);
@@ -2149,8 +2068,7 @@ data: [DONE]\n"
             &has_text_delta,
             &Arc::new(AtomicBool::new(false)),
             Some("claude-3"),
-            &mut done_state,
-        )
+            &mut done_state)
         .expect("transformed output");
 
         let output = String::from_utf8(output.to_vec()).expect("valid utf8");
@@ -2164,8 +2082,7 @@ data: [DONE]\n"
         let chunk = Bytes::from_static(
             b"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\
 data: {\"choices\":[{\"delta\":{\"content\":\"\\n\\nmodel: gpt-test\"}}]}\n\
-data: [DONE]\n",
-        );
+data: [DONE]\n");
         let mut buffer = String::new();
         let prompt_tokens = Arc::new(AtomicI64::new(0));
         let completion_tokens = Arc::new(AtomicI64::new(0));
@@ -2183,8 +2100,7 @@ data: [DONE]\n",
             &has_text_delta,
             &Arc::new(AtomicBool::new(false)),
             Some("gpt-test"),
-            &mut done_state,
-        )
+            &mut done_state)
         .expect("transformed output");
 
         let output = String::from_utf8(output.to_vec()).expect("valid utf8");
@@ -2252,8 +2168,7 @@ data: [DONE]\n",
             &has_text_delta,
             &has_tool_calls,
             Some("gpt-test"),
-            &mut done_state,
-        );
+            &mut done_state);
 
         assert!(output.is_none());
         assert!(!has_text_delta.load(Ordering::Relaxed));
@@ -2264,8 +2179,7 @@ data: [DONE]\n",
             has_sse_error.load(Ordering::Relaxed),
             has_text_delta.load(Ordering::Relaxed),
             has_tool_calls.load(Ordering::Relaxed),
-            completion_tokens.load(Ordering::Relaxed),
-        ));
+            completion_tokens.load(Ordering::Relaxed)));
     }
 
     #[test]
@@ -2333,8 +2247,7 @@ data: [DONE]\n"
             &has_text_delta,
             &has_tool_calls,
             Some("gpt-test"),
-            &mut done_state,
-        );
+            &mut done_state);
 
         // 有文本内容，所以 has_text_delta 应为 true
         assert!(has_text_delta.load(Ordering::Relaxed));
@@ -2373,8 +2286,7 @@ data: [DONE]\n"
             &has_text_delta,
             &has_tool_calls,
             Some("gpt-test"),
-            &mut done_state,
-        );
+            &mut done_state);
 
         // 无文本内容，has_text_delta 应为 false
         assert!(!has_text_delta.load(Ordering::Relaxed));
@@ -2393,8 +2305,7 @@ data: [DONE]\n"
         let chunk = Bytes::from_static(
             b"data: {\"choices\":[{\"delta\":{\"content\":\"Hello!\"}}]}\n\
 data: {\"choices\":[],\"finish_reason\":\"stop\"}\n\
-data: [DONE]\n",
-        );
+data: [DONE]\n");
         let prompt_tokens = Arc::new(AtomicI64::new(0));
         let completion_tokens = Arc::new(AtomicI64::new(0));
         let has_sse_error = Arc::new(AtomicBool::new(false));
@@ -2413,8 +2324,7 @@ data: [DONE]\n",
             &has_text_delta,
             &has_tool_calls,
             Some("gpt-test"),
-            &mut done_state,
-        );
+            &mut done_state);
 
         // 有文本内容
         assert!(has_text_delta.load(Ordering::Relaxed));
@@ -2464,8 +2374,7 @@ data: [DONE]\n",
             b"data: {\"choices\":[{\"delta\":{\"content\":\"Hello!\"}}]}\n\
 data: {\"choices\":[{\"delta\":{\"content\":\" How can I help?\"}}]}\n\
 data: {\"choices\":[],\"finish_reason\":\"stop\"}\n\
-data: [DONE]\n",
-        );
+data: [DONE]\n");
         let prompt_tokens = Arc::new(AtomicI64::new(0));
         let completion_tokens = Arc::new(AtomicI64::new(0));
         let has_sse_error = Arc::new(AtomicBool::new(false));
@@ -2484,8 +2393,7 @@ data: [DONE]\n",
             &has_text_delta,
             &has_tool_calls,
             Some("gpt-4o"),
-            &mut done_state,
-        );
+            &mut done_state);
 
         assert!(has_text_delta.load(Ordering::Relaxed));
         assert!(
@@ -2495,8 +2403,7 @@ data: [DONE]\n",
         let text = String::from_utf8(
             output
                 .expect("model: gpt-4o should be injected (regression: tools-in-request no longer blocks)")
-                .to_vec(),
-        )
+                .to_vec())
         .expect("valid utf8");
         assert_eq!(text.matches("model: gpt-4o").count(), 1);
         assert!(done_state.appended_model_info);
@@ -2531,8 +2438,7 @@ data: [DONE]\n"
             &has_text_delta,
             &has_tool_calls,
             Some("claude-3"),
-            &mut done_state,
-        )
+            &mut done_state)
         .expect("transformed output");
 
         // 工具调用被转换为 OpenAI 格式的 tool_calls
@@ -2552,8 +2458,7 @@ data: [DONE]\n"
         let chunk = Bytes::from_static(
             b"data: {\"choices\":[{\"delta\":{\"content\":\"Let me check.\"}}]}\n\
 data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\
-data: [DONE]\n",
-        );
+data: [DONE]\n");
         let prompt_tokens = Arc::new(AtomicI64::new(0));
         let completion_tokens = Arc::new(AtomicI64::new(0));
         let has_sse_error = Arc::new(AtomicBool::new(false));
@@ -2572,8 +2477,7 @@ data: [DONE]\n",
             &has_text_delta,
             &has_tool_calls,
             Some("gpt-test"),
-            &mut done_state,
-        );
+            &mut done_state);
 
         // 有文本内容
         assert!(has_text_delta.load(Ordering::Relaxed));
@@ -2592,8 +2496,7 @@ data: [DONE]\n",
         let chunk = Bytes::from_static(
             b"data: {\"choices\":[{\"delta\":{\"content\":\"Let me check.\"}}]}\n\
 data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"function_call\"}]}\n\
-data: [DONE]\n",
-        );
+data: [DONE]\n");
         let prompt_tokens = Arc::new(AtomicI64::new(0));
         let completion_tokens = Arc::new(AtomicI64::new(0));
         let has_sse_error = Arc::new(AtomicBool::new(false));
@@ -2612,8 +2515,7 @@ data: [DONE]\n",
             &has_text_delta,
             &has_tool_calls,
             Some("gpt-test"),
-            &mut done_state,
-        );
+            &mut done_state);
 
         // 有文本内容
         assert!(has_text_delta.load(Ordering::Relaxed));
@@ -2650,8 +2552,7 @@ data: [DONE]\n"
             &has_text_delta,
             &has_tool_calls,
             Some("gpt-test"),
-            &mut done_state,
-        );
+            &mut done_state);
 
         assert!(has_text_delta.load(Ordering::Relaxed));
         assert!(has_tool_calls.load(Ordering::Relaxed));

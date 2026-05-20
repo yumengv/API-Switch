@@ -1,21 +1,19 @@
-use crate::AppState;
+use crate::state_version;
 use serde::Deserialize;
-use tauri::State;
 
 #[derive(Deserialize)]
 pub struct TakeDirtyParams {
     pub module: String,
 }
 
-/// 取出指定模块的 dirty 标记并清零。返回 `true` 表示有更新。
+/// 取出指定模块的版本号。前端比对上次值，变化即表示有更新
 #[tauri::command]
-pub async fn take_dirty(state: State<'_, AppState>, params: TakeDirtyParams) -> Result<bool, crate::AppError> {
-    let dirty = state.dirty.clone();
+pub async fn take_dirty(params: TakeDirtyParams) -> Result<u64, crate::AppError> {
     match params.module.as_str() {
-        "log" => Ok(dirty.take_log()),
-        "pool" => Ok(dirty.take_pool()),
-        "channel" => Ok(dirty.take_channel()),
-        "token" => Ok(dirty.take_token()),
+        "log" => Ok(state_version::current("log")),
+        "pool" => Ok(state_version::current("pool")),
+        "channel" => Ok(state_version::current("channel")),
+        "token" => Ok(state_version::current("token")),
         _ => Err(crate::AppError::Validation(format!("Unknown module: {}", params.module))),
     }
 }

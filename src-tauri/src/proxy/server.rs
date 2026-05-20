@@ -2,7 +2,6 @@ use super::circuit_breaker::CircuitBreaker;
 use super::handlers;
 use super::responses_handler;
 use crate::database::{AppSettings, Database};
-use crate::dirty;
 use axum::extract::Query;
 use axum::routing::{get, post};
 use axum::Router;
@@ -28,7 +27,6 @@ pub struct ProxyState {
     pub settings: Arc<RwLock<AppSettings>>,
     pub circuit_breakers: Arc<RwLock<HashMap<String, CircuitBreaker>>>,
     pub failure_counts: Arc<RwLock<HashMap<String, u32>>>, // Entry ID -> consecutive failure count
-    pub dirty: Arc<dirty::DirtyFlags>,
     pub app_handle: Option<tauri::AppHandle>,
     pub http_client: reqwest::Client,
     pub response_store: Arc<RwLock<HashMap<String, serde_json::Value>>>,
@@ -55,7 +53,6 @@ impl ProxyServer {
         settings: Arc<RwLock<AppSettings>>,
         app_handle: Option<tauri::AppHandle>,
         failure_counts: Arc<RwLock<HashMap<String, u32>>>,
-        dirty: Arc<dirty::DirtyFlags>,
     ) -> Self {
         let connect_timeout_secs = settings
             .try_read()
@@ -66,7 +63,6 @@ impl ProxyServer {
             settings,
             circuit_breakers: Arc::new(RwLock::new(HashMap::new())),
             failure_counts,
-            dirty,
             app_handle,
             http_client: reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(connect_timeout_secs))

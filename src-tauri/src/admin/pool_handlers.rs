@@ -148,7 +148,6 @@ pub async fn test_latency(
     let result = pool_service::test_entry_latency(
         &state.db,
         &id,
-        state.runtime.as_ref().map(|runtime| runtime.dirty.as_ref()),
     )
     .await?;
     Ok(Json(result))

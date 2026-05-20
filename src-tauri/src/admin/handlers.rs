@@ -15,9 +15,13 @@ pub async fn version() -> axum::Json<serde_json::Value> {
     }))
 }
 
-pub async fn state_version() -> axum::Json<crate::state_version::StateVersionResponse> {
-    axum::Json(crate::state_version::StateVersionResponse {
-        version: crate::state_version::current(),
+pub async fn state_version() -> axum::Json<crate::state_version::StatVersionsResponse> {
+    let v = crate::state_version::all();
+    axum::Json(crate::state_version::StatVersionsResponse {
+        log: v["log"],
+        pool: v["pool"],
+        channel: v["channel"],
+        token: v["token"],
     })
 }
 
@@ -238,7 +242,7 @@ pub async fn patch_settings(
 
     // 5. 保存到数据库
     state.db.update_settings(&merged)?;
-    crate::state_version::bump();
+    crate::state_version::bump("pool");
 
     // 6. 更新 L1 缓存
     *state.settings.write().await = merged.clone();
@@ -311,7 +315,7 @@ pub async fn update_settings(
     }
 
     state.db.update_settings(&payload.data)?;
-    crate::state_version::bump();
+    crate::state_version::bump("pool");
     let refreshed = state.db.get_settings()?;
     *state.settings.write().await = refreshed;
 

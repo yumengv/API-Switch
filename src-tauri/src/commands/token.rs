@@ -22,7 +22,7 @@ pub fn list_access_keys_paginated(
 #[tauri::command]
 pub fn create_access_key(state: State<'_, AppState>, name: String) -> Result<AccessKey, AppError> {
         let key = token_service::create_access_key(&state.db, &name)?;
-        state.dirty.mark_token();
+        crate::state_version::bump("token");
         Ok(key)
 }
 
@@ -33,7 +33,7 @@ pub async fn delete_access_key(
     id: String,
 ) -> Result<(), AppError> {
         token_service::delete_access_key(&state.db, &id, Some(&app))?;
-        state.dirty.mark_token();
+        crate::state_version::bump("token");
         Ok(())
 }
 
@@ -45,6 +45,6 @@ pub async fn toggle_access_key(
     enabled: bool,
 ) -> Result<(), AppError> {
         token_service::toggle_access_key(&state.db, &id, enabled, Some(&app))?;
-        state.dirty.mark_token();
+        crate::state_version::bump("token");
         Ok(())
 }

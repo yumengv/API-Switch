@@ -18,7 +18,7 @@ pub fn list_access_keys_paginated(
 /// Create a new access key
 pub fn create_access_key(db: &Database, name: &str) -> Result<AccessKey, AppError> {
     let key = db.create_access_key(name)?;
-    crate::state_version::bump();
+    crate::state_version::bump("token");
     Ok(key)
 }
 
@@ -32,7 +32,7 @@ pub fn delete_access_key(
     if let Some(app) = app {
         crate::refresh_tray_if_enabled(app);
     }
-    crate::state_version::bump();
+    crate::state_version::bump("token");
     Ok(())
 }
 
@@ -47,6 +47,6 @@ pub fn toggle_access_key(
     if let Some(app) = app {
         crate::refresh_tray_if_enabled(app);
     }
-    crate::state_version::bump();
+    crate::state_version::bump("token");
     Ok(())
 }

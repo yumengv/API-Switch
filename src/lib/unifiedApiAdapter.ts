@@ -498,12 +498,15 @@ export const apiAdapter: ApiAdapter = {
       : webRequest<TestChatResponse>('POST', '/test-chat', { entry_id: entryId, messages }),
 
   dirty: {
-    /** 脏标记轮询，模块取值 'log' | 'pool' | 'channel' | 'token' */
+    /** 脏标记轮询：拉取模块版本号，比对上次值，变化则返回 true */
     take: async (module: 'log' | 'pool' | 'channel' | 'token') => {
+      let version: number;
       if (useTauri()) {
-        return tauriCmd<boolean>('take_dirty', { params: { module } });
+        version = await tauriCmd<number>('take_dirty', { params: { module } });
+      } else {
+        const resp = await webRequest<Record<string, number>>('GET', '/state-version');
+        version = resp[module];
       }
-      const { version } = await webRequest<{ version: number }>('GET', '/state-version');
       const lastVersion = lastDirtyStateVersions[module];
       if (lastVersion === undefined) {
         lastDirtyStateVersions[module] = version;

@@ -84,7 +84,7 @@ pub fn insert_test_usage_log(
     if let Some(handle) = app_handle {
         let _ = tauri::Emitter::emit(handle, "new-usage-log", ());
     }
-    crate::state_version::bump();
+    crate::state_version::bump("log");
 }
 
 pub fn extract_usage_tokens(body: &Value) -> (i64, i64) {

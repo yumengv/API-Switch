@@ -66,7 +66,9 @@ pub fn toggle_entry(
     id: &str,
     enabled: bool,
 ) -> Result<(), AppError> {
-    toggle_entry_inner(db, failure_counts, id, enabled)
+    toggle_entry_inner(db, failure_counts, id, enabled)?;
+    crate::state_version::bump("pool");
+    Ok(())
 }
 
 /// Batch toggle entries — single IPC call to avoid N concurrent IPC calls.
@@ -79,6 +81,7 @@ pub fn batch_toggle_entries(
     for id in ids {
         toggle_entry_inner(db, failure_counts, id, enabled)?;
     }
+    crate::state_version::bump("pool");
     Ok(())
 }
 
@@ -100,12 +103,16 @@ fn toggle_entry_inner(
 
 /// Reorder entries by the given ordered IDs.
 pub fn reorder_entries(db: &Database, ordered_ids: &[String]) -> Result<(), AppError> {
-    db.reorder_entries(ordered_ids)
+    db.reorder_entries(ordered_ids)?;
+    crate::state_version::bump("pool");
+    Ok(())
 }
 
 /// Delete an entry by ID.
 pub fn delete_entry(db: &Database, id: &str) -> Result<(), AppError> {
-    db.delete_entry(id)
+    db.delete_entry(id)?;
+    crate::state_version::bump("pool");
+    Ok(())
 }
 
 /// Create a new API entry. Also syncs channel model list.
@@ -127,6 +134,7 @@ pub fn create_entry(db: &Database, params: CreateEntryParams) -> Result<ApiEntry
         &params.model,
         entry.owned_by.as_deref(),
     );
+    crate::state_version::bump("pool");
     Ok(entry)
 }
 
@@ -151,25 +159,19 @@ pub fn backfill_entry_catalog_meta(
     items: Vec<CatalogMetaUpdate>,
 ) -> Result<(), AppError> {
     let inputs = to_catalog_meta_inputs(items);
-    db.backfill_entry_catalog_meta(&inputs)
+    db.backfill_entry_catalog_meta(&inputs)?;
+    crate::state_version::bump("pool");
+    Ok(())
 }
 
 fn truncate_for_log(value: &str, max_chars: usize) -> String {
     value.chars().take(max_chars).collect::<String>()
 }
 
-fn mark_latency_test_dirty(dirty: Option<&crate::dirty::DirtyFlags>) {
-    if let Some(dirty) = dirty {
-        dirty.mark_pool();
-        dirty.mark_log();
-    }
-}
-
 /// Test latency for a specific entry.
 pub async fn test_entry_latency(
     db: &Database,
     entry_id: &str,
-    dirty: Option<&crate::dirty::DirtyFlags>,
 ) -> Result<TestLatencyResult, AppError> {
     let entries = db.get_entries_for_routing_all()?;
     let entry = entries
@@ -219,7 +221,8 @@ pub async fn test_entry_latency(
                     error_preview: None,
                 },
             );
-            mark_latency_test_dirty(dirty);
+            crate::state_version::bump("pool");
+            crate::state_version::bump("log");
             return Err(AppError::Network(message));
         }
     };
@@ -255,7 +258,8 @@ pub async fn test_entry_latency(
                     error_preview: None,
                 },
             );
-            mark_latency_test_dirty(dirty);
+            crate::state_version::bump("pool");
+            crate::state_version::bump("log");
             return Ok(TestLatencyResult {
                 status: "failed:network_error".to_string(),
                 response_ms: "X".to_string(),
@@ -297,7 +301,8 @@ pub async fn test_entry_latency(
                 error_preview: Some(&error_preview),
             },
         );
-        mark_latency_test_dirty(dirty);
+        crate::state_version::bump("pool");
+        crate::state_version::bump("log");
         return Ok(TestLatencyResult {
             status: "failed:http_error".to_string(),
             response_ms: "X".to_string(),
@@ -331,7 +336,8 @@ pub async fn test_entry_latency(
                     error_preview: None,
                 },
             );
-            mark_latency_test_dirty(dirty);
+            crate::state_version::bump("pool");
+            crate::state_version::bump("log");
             return Ok(TestLatencyResult {
                 status: "failed:response_error".to_string(),
                 response_ms: "X".to_string(),
@@ -362,7 +368,8 @@ pub async fn test_entry_latency(
                 error_preview: None,
             },
         );
-        mark_latency_test_dirty(dirty);
+        crate::state_version::bump("pool");
+        crate::state_version::bump("log");
 
         return Ok(TestLatencyResult {
             status: "failed:empty_response".to_string(),
@@ -400,7 +407,8 @@ pub async fn test_entry_latency(
             error_preview: None,
         },
     );
-    mark_latency_test_dirty(dirty);
+    crate::state_version::bump("pool");
+    crate::state_version::bump("log");
 
     Ok(TestLatencyResult {
         status: "ok".to_string(),
@@ -425,9 +433,13 @@ pub fn get_all_groups(db: &Database) -> Result<Vec<String>, AppError> {
 
 /// Update the group_name for a specific entry.
 pub fn update_entry_display_name(db: &Database, id: &str, display_name: &str) -> Result<(), AppError> {
-    db.update_entry_display_name(id, display_name)
+    db.update_entry_display_name(id, display_name)?;
+    crate::state_version::bump("pool");
+    Ok(())
 }
 
 pub fn update_entry_group(db: &Database, id: &str, group_name: &str) -> Result<(), AppError> {
-    db.update_entry_group(id, group_name)
+    db.update_entry_group(id, group_name)?;
+    crate::state_version::bump("pool");
+    Ok(())
 }

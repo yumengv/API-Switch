@@ -100,7 +100,7 @@ pub fn update_channel_response_ms(
             response_ms: params.response_ms,
         },
     )?;
-    state.dirty.mark_channel();
+    crate::state_version::bump("channel");
     Ok(())
 }
 
@@ -135,8 +135,7 @@ pub async fn create_channel(
         },
     )?;
     let _ = app.emit("channels-changed", ());
-    crate::state_version::bump();
-    state.dirty.mark_channel();
+    crate::state_version::bump("channel");
     Ok(channel)
 }
 
@@ -159,7 +158,7 @@ pub async fn update_channel(
             notes: params.notes,
         },
     )?;
-    state.dirty.mark_channel();
+    crate::state_version::bump("channel");
     Ok(channel)
 }
 
@@ -170,8 +169,8 @@ pub async fn delete_channel(
     id: String,
 ) -> Result<(), AppError> {
     channel_service::delete_channel(&state.db, Some(&app), id)?;
-    state.dirty.mark_channel();
-    state.dirty.mark_pool();
+    crate::state_version::bump("channel");
+    crate::state_version::bump("pool");
     Ok(())
 }
 
@@ -227,10 +226,9 @@ pub async fn test_channel(
     } else {
         let _ = state.db.disable_channel(&channel_id);
         let _ = app.emit("channels-changed", ());
-        crate::state_version::bump();
     }
 
-    state.dirty.mark_channel();
+    crate::state_version::bump("channel");
     Ok(result)
 }
 
@@ -288,9 +286,8 @@ pub async fn select_models(
         .sync_entries_for_channel_with_meta(&channel_id, &model_names, &catalog_meta)?;
     let _ = app.emit("entries-changed", ());
     let _ = app.emit("channels-changed", ());
-    crate::state_version::bump();
-    state.dirty.mark_channel();
-    state.dirty.mark_pool();
+    crate::state_version::bump("channel");
+    crate::state_version::bump("pool");
     crate::refresh_tray_if_enabled(&app);
     Ok(())
 }
@@ -519,7 +516,7 @@ pub async fn save_channel_with_models(
     params: channel_service::SaveChannelWithModelsParams,
 ) -> Result<channel_service::SaveChannelWithModelsResult, AppError> {
     let result = channel_service::save_channel_with_models(&state.db, Some(&app), params)?;
-    state.dirty.mark_channel();
-    state.dirty.mark_pool();
+    crate::state_version::bump("channel");
+    crate::state_version::bump("pool");
     Ok(result)
 }
