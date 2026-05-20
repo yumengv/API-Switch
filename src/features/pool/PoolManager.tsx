@@ -26,7 +26,6 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { useApiAdapter } from "@/lib/useApiAdapter";
 import { useDirtyPolling } from "../../lib/useDirtyPolling";
 import { useTauriEvent } from "@/lib/useTauriEvent";
-import { useEvent } from "@/lib/events";
 import { type ApiEntry, type Channel, type PaginatedResult } from "@/types";
 import { cn, formatResponseMs, parseResponseMs } from "@/lib/utils";
 import { TestChatDialog } from "@/components/proxy/TestChatDialog";
@@ -649,21 +648,7 @@ export function PoolManager() {
      queryClient.invalidateQueries({ queryKey: ["settings"] });
    });
 
-   // Event-driven refresh: invalidate entries when the backend signals a change.
-   // 300ms 防抖：避免 Tauri 事件风暴导致连续重渲染
-   const lastEntriesEvent = useRef(0);
-   useEvent("entries-changed", () => {
-     const now = Date.now();
-     if (now - lastEntriesEvent.current < 300) return;
-     lastEntriesEvent.current = now;
-     queryClient.invalidateQueries({ queryKey: entriesQueryKey });
-   });
-
-   useEvent("channels-changed", () => {
-     queryClient.invalidateQueries({ queryKey: ["channels", "all"] });
-   });
-
-  const catalogMap = useMemo(() => {
+   const catalogMap = useMemo(() => {
     const map = new Map<string, CatalogDisplayMeta>();
     for (const entry of entries || []) {
       if (!map.has(entry.model)) {

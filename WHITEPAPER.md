@@ -2,7 +2,7 @@
 
 > 文档定位：架构、模块、数据流、数据库、协议适配、运行模式与实现细节  
 > 文档层级：程序实现可归纳为 `WHITEPAPER.md`；`WHITEPAPER.md` 可归纳为 `PLAN.md`。反向看，`PLAN.md` 的扩展是 `WHITEPAPER.md`，`WHITEPAPER.md` 的扩展是程序实现。  
-> 更新日期：2026-05-19
+> 更新日期：2026-05-20
 
 ---
 
@@ -28,9 +28,66 @@ Client / AI Tool
 Desktop UI / Web Admin
   -> Unified ApiAdapter
   -> Tauri commands or Admin HTTP API
-  -> services
-  -> SQLite DAOs
+  -> Backend services (settings, channels, pool, tokens, logs)
 ```
+
+## 2. 运行时架构与统一 UI 约束
+
+### 2.1 双运行时架构
+
+项目维护**一套 UI 代码**，同时运行于两种环境：
+
+| 运行时 | 运行方式 | 数据刷新方案 |
+|--------|----------|-------------|
+| **Desktop** | Tauri v2 (WebView) | IPC `invoke` + Tauri Event → Rust `DirtyFlags` → `useDirtyPolling` |
+| **Web Admin** | HTTP 管理界面 | fetch HTTP API → `/state-version` 版本对比 → `useDirtyPolling` |
+
+### 2.2 统一适配层
+
+所有 UI 到后端的通信统一经过 `src/lib/unifiedApiAdapter.ts` 中的 `apiAdapter`，在运行时根据环境自动分发：
+
+```
+apiAdapter.dirty.take(module)
+  Desktop → tauriCmd('take_dirty', { params: { module } }) → 读 Rust AtomicBool
+  Web     → GET /state-version → 对比版本号
+```
+
+```typescript
+// 1. 数据获取 — 统一走 React Query + useDirtyPolling（推荐）
+import { useQuery } from "@tanstack/react-query";
+import { useDirtyPolling } from "@/lib/useDirtyPolling";
+
+useDirtyPolling('log');  // 桌面用 dirty flag, Web 用 state-version
+const { data } = useQuery({ queryKey: ["usageLogs"], queryFn: () => api.usage.getLogs() });
+
+// 2. 变更操作 — 统一走 useMutation，onSuccess 中 invalidateQueries
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+
+const mutation = useMutation({
+  mutationFn: (name: string) => api.tokens.create(name),
+  onSuccess: () => queryClient.invalidateQueries({ queryKey: ["accessKeys"] }),
+});
+
+// 3. ❌ 禁止 — 直接使用 Tauri Event 做数据刷新（桌面专用，Web 无效）
+// import { useEvent } from "@/lib/events";
+// useEvent("new-usage-log", () => invalidateQueries(...));
+// 改用 useDirtyPolling 代替
+
+// 4. ❌ 禁止 — 独立 setInterval 轮询（不经过 dirty polling，双平台行为不一致）
+// useEffect(() => { const id = setInterval(fetchData, 5000); return () => clearInterval(id); }, []);
+// 改用 useDirtyPolling + React Query 代替
+```
+
+### 2.3 核心约束
+
+> **所有 UI 层的数据刷新和状态同步，必须使用 `useDirtyPolling` + React Query 的 `invalidateQueries` 模式，禁止引入仅桌面可用的方案。**
+
+原因：
+- 维护两套 UI（Desktop 专用 + Web 专用）成本极高，项目早期已决定共享代码
+- Tauri Event 仅桌面可用，`useDirtyPolling` 的 `apiAdapter.dirty.take()` 在双端都有实现
+- 独立的 `setInterval` / `setTimeout` 轮询不经过 dirty polling 状态机，会导致双平台行为不一致和请求冗余
+
+此约束已在 v0.6.59 中强制执行：LogPage/ChannelManager/PoolManager/TokenPage 均使用 `useDirtyPolling`，TokenManager 从独立 `setInterval` 迁移到 `useQuery` + `useDirtyPolling`。
 
 ---
 

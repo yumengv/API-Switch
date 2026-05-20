@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useMemo } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Plus, Trash2, Copy, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -14,68 +15,60 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { useApiAdapter } from "@/lib/useApiAdapter";
+import { useDirtyPolling } from "@/lib/useDirtyPolling";
+import { toast } from "sonner";
 import type { AccessKey } from "@/types";
-
-const POLL_INTERVAL_MS = 10_000;
 
 export function TokenManager() {
   const { t } = useTranslation();
   const adapter = useApiAdapter();
+  const queryClient = useQueryClient();
 
-  const [keys, setKeys] = useState<AccessKey[]>([]);
-  const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
   const [createdKey, setCreatedKey] = useState<AccessKey | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  const fetchKeys = useCallback(async () => {
-    try {
-      const data = await adapter.tokens.list();
-      setKeys(data);
-    } catch {
-      // keep stale data on transient failure
-    } finally {
-      setLoading(false);
-    }
-  }, [adapter.tokens]);
+  const dirtyQueryKeys = useMemo(() => [["accessKeys"]] as const, []);
+  useDirtyPolling('token', dirtyQueryKeys);
 
-  useEffect(() => {
-    fetchKeys();
-    const id = setInterval(fetchKeys, POLL_INTERVAL_MS);
-    return () => clearInterval(id);
-  }, [fetchKeys]);
+  const { data: keys = [], isLoading } = useQuery({
+    queryKey: ["accessKeys"],
+    queryFn: () => adapter.tokens.list(),
+    staleTime: 2000,
+  });
 
-  const handleCreate = async () => {
-    if (!newKeyName.trim()) return;
-    try {
-      const key = await adapter.tokens.create(newKeyName.trim());
+  const createMutation = useMutation({
+    mutationFn: (name: string) => adapter.tokens.create(name),
+    onSuccess: (key) => {
+      queryClient.invalidateQueries({ queryKey: ["accessKeys"] });
+      setShowCreate(false);
       setCreatedKey(key);
       setNewKeyName("");
-      setShowCreate(false);
-      await fetchKeys();
-    } catch {
-      // error surfaced via future toast integration
-    }
-  };
+    },
+    onError: (err) => {
+      toast.error(`${t("token.add")} ${t("common.failed")}: ${err}`);
+    },
+  });
 
-  const handleDelete = async (id: string) => {
-    try {
-      await adapter.tokens.delete(id);
-      await fetchKeys();
-    } catch {
-      // handle error
-    }
-  };
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => adapter.tokens.delete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["accessKeys"] });
+    },
+    onError: (err) => {
+      toast.error(`${t("common.delete")} ${t("common.failed")}: ${err}`);
+    },
+  });
 
-  const handleToggle = async (id: string, enabled: boolean) => {
-    try {
-      await adapter.tokens.toggle(id, enabled);
-      await fetchKeys();
-    } catch {
-      // handle error
-    }
-  };
+  const toggleMutation = useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
+      adapter.tokens.toggle(id, enabled),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["accessKeys"] }),
+    onError: (err) => {
+      toast.error(`${t("common.toggle")} ${t("common.failed")}: ${err}`);
+    },
+  });
 
   const copyKey = async (key: string, id: string) => {
     await navigator.clipboard.writeText(key);
@@ -85,7 +78,7 @@ export function TokenManager() {
 
   const formatDate = (ts: number) => new Date(ts * 1000).toLocaleString();
 
-  if (loading) {
+  if (isLoading) {
     return <div className="p-6 text-muted-foreground">{t("common.loading")}</div>;
   }
 
@@ -117,7 +110,7 @@ export function TokenManager() {
                   <td className="px-4 py-3">
                     <Switch
                       checked={k.enabled}
-                      onCheckedChange={(checked) => handleToggle(k.id, checked)}
+                      onCheckedChange={(checked) => toggleMutation.mutate({ id: k.id, enabled: checked })}
                     />
                   </td>
                   <td className="px-4 py-3 font-medium">{k.name}</td>
@@ -148,7 +141,7 @@ export function TokenManager() {
                       variant="ghost"
                       size="icon"
                       className="h-7 w-7"
-                      onClick={() => handleDelete(k.id)}
+                      onClick={() => deleteMutation.mutate(k.id)}
                     >
                       <Trash2 className="h-3.5 w-3.5 text-destructive" />
                     </Button>
@@ -184,7 +177,10 @@ export function TokenManager() {
             <Button variant="outline" onClick={() => setShowCreate(false)}>
               {t("common.cancel")}
             </Button>
-            <Button onClick={handleCreate} disabled={!newKeyName.trim()}>
+            <Button
+              onClick={() => createMutation.mutate(newKeyName)}
+              disabled={!newKeyName.trim() || createMutation.isPending}
+            >
               {t("common.add")}
             </Button>
           </DialogFooter>

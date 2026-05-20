@@ -14,7 +14,6 @@ import {
 import { cn, formatResponseMs } from '@/lib/utils';
 import { useApiAdapter } from '../../lib/useApiAdapter';
 import { useDirtyPolling } from '../../lib/useDirtyPolling';
-import { useEvent } from '@/lib/events';
 import { getChannelErrorMessage } from './channelErrors';
 import type { PaginatedResult } from '@/types';
 import type { Channel } from './types';
@@ -44,7 +43,6 @@ export const ChannelManager: React.FC = () => {
   const { t } = useTranslation();
   const api = useApiAdapter();
   const queryClient = useQueryClient();
-  const lastEntriesEvent = useRef(0);
   const {
     data: channelPages,
     fetchNextPage,
@@ -66,7 +64,7 @@ export const ChannelManager: React.FC = () => {
     queryFn: () => api.pool.list(),
     staleTime: 2000,
   });
-  const dirtyQueryKeys = useMemo(() => [['channels', 'paginated'], ['entries']] as const, []);
+  const dirtyQueryKeys = useMemo(() => [['channels', 'paginated'], ['channels', 'all'], ['entries']] as const, []);
 
   useDirtyPolling('channel', dirtyQueryKeys);
 
@@ -99,21 +97,6 @@ export const ChannelManager: React.FC = () => {
     observer.observe(el);
     return () => observer.disconnect();
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
-
-  useEvent("channels-changed", () => {
-    queryClient.invalidateQueries({ queryKey: ["channels", "paginated"] });
-    queryClient.invalidateQueries({ queryKey: ["channels", "all"] });
-  });
-
-  useEvent("entries-changed", () => {
-    // 300ms 防抖：避免 Tauri 事件风暴导致连续重渲染
-    const now = Date.now();
-    if (now - lastEntriesEvent.current < 300) return;
-    lastEntriesEvent.current = now;
-    queryClient.invalidateQueries({ queryKey: ["channels", "paginated"] });
-    queryClient.invalidateQueries({ queryKey: ["channels", "all"] });
-    queryClient.invalidateQueries({ queryKey: ["entries"] });
-  });
 
   const refreshChannels = async () => {
     queryClient.invalidateQueries({ queryKey: ["channels", "paginated"] });
