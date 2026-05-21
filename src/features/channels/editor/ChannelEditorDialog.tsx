@@ -66,8 +66,6 @@ export const ChannelEditorDialog: React.FC<{
   useEffect(() => {
     if (!open) return;
     setSaving(false);
-    setAvailableModels([]);
-    setSelectedModels([]);
     setModelSearch('');
     setTimeRange(3);
     setShowApiKey(false);
@@ -86,6 +84,8 @@ export const ChannelEditorDialog: React.FC<{
       setSelectedModels(channel.selected_models || []);
     } else {
       setForm(DEFAULT_FORM);
+      setAvailableModels([]);
+      setSelectedModels([]);
     }
    }, [channel, open]);
 
@@ -264,10 +264,6 @@ export const ChannelEditorDialog: React.FC<{
   // 获取模型列表
   const handleFetchModels = async () => {
     const seq = ++fetchSeqRef.current;
-    setShowModels(true);
-    setAvailableModels([]);
-    setSelectedModels([]);
-    setModelTestResults({});
 
     setFetchingModels(true);
     setModelsValidated(false);
@@ -280,8 +276,11 @@ export const ChannelEditorDialog: React.FC<{
       if (fetchSeqRef.current !== seq) return;
 
       const finalModels = mergeModelsByName([fetched.models]);
-      setModelsValidated(true);
+      setShowModels(true);
+      setSelectedModels([]);
       setAvailableModels(finalModels);
+      setModelTestResults({});
+      setModelsValidated(true);
       const nextSelected = autoSelectModels(finalModels);
       if (fetchSeqRef.current !== seq) return;
       setSelectedModels(nextSelected);
