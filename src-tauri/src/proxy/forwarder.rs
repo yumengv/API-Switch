@@ -1286,30 +1286,41 @@ fn stream_chunk_has_text_delta(value: &Value) -> bool {
         })
 }
 
-/// 在 message / delta 级别补全缺少的 reasoning 字段。
+/// 在 message / delta 级别归一已有的 reasoning 等价字段。
 /// - 有 `reasoning_content` 无 `reasoning_text` → 补 `reasoning_text`
 /// - 有 `reasoning_text` 无 `reasoning_content` → 补 `reasoning_content`
+/// - 有 `reasoning_details` 无 `reasoning_content` → 补 `reasoning_content`
+///
+/// 只翻译已存在的信息，不缓存、不回放、不凭空生成 reasoning 历史。
 fn normalize_reasoning_fields(value: &mut Value) {
     let obj = match value.as_object_mut() {
         Some(obj) => obj,
         None => return,
     };
-    if let Some(rc) = obj.get("reasoning_content").cloned() {
-        if !obj.contains_key("reasoning_text") {
-            obj.insert("reasoning_text".into(), rc);
-        }
-    } else if let Some(rt) = obj.get("reasoning_text").cloned() {
+    let canonical = obj
+        .get("reasoning_content")
+        .cloned()
+        .or_else(|| obj.get("reasoning_text").cloned())
+        .or_else(|| obj.get("reasoning_details").cloned());
+
+    if let Some(reasoning) = canonical {
         if !obj.contains_key("reasoning_content") {
-            obj.insert("reasoning_content".into(), rt);
+            obj.insert("reasoning_content".into(), reasoning.clone());
+        }
+        if !obj.contains_key("reasoning_text") {
+            obj.insert("reasoning_text".into(), reasoning);
         }
     }
 }
 
-/// 扫描 SSE chunk 字节中的 `reasoning_content` / `reasoning_text` delta 字段，
+/// 扫描 SSE chunk 字节中的 reasoning delta 等价字段，
 /// 补全缺少的对应字段。返回 `Some(modified_bytes)` 如果有任何修改。
 fn normalize_reasoning_in_sse_chunk(chunk: &Bytes) -> Option<Bytes> {
     let text = std::str::from_utf8(chunk).ok()?;
-    if !text.contains("reasoning_content") && !text.contains("reasoning_text") {
+    if !text.contains("reasoning_content")
+        && !text.contains("reasoning_text")
+        && !text.contains("reasoning_details")
+    {
         return None;
     }
 
@@ -2178,6 +2189,41 @@ data: [DONE]\n");
         let output = String::from_utf8(output.to_vec()).expect("valid utf8");
         assert_eq!(output.matches("data: [DONE]").count(), 1);
         assert_eq!(output.matches("model: gpt-test").count(), 1);
+    }
+
+    #[test]
+    fn normalize_reasoning_fields_maps_details_without_creating_history() {
+        let mut details = serde_json::json!({
+            "role": "assistant",
+            "content": "",
+            "reasoning_details": "kept reasoning"
+        });
+        normalize_reasoning_fields(&mut details);
+        assert_eq!(details["reasoning_content"], "kept reasoning");
+        assert_eq!(details["reasoning_text"], "kept reasoning");
+        assert_eq!(details["reasoning_details"], "kept reasoning");
+
+        let mut no_reasoning = serde_json::json!({
+            "role": "assistant",
+            "content": "answer"
+        });
+        normalize_reasoning_fields(&mut no_reasoning);
+        assert!(no_reasoning.get("reasoning_content").is_none());
+        assert!(no_reasoning.get("reasoning_text").is_none());
+    }
+
+    #[test]
+    fn normalize_reasoning_in_sse_chunk_maps_details_delta() {
+        let chunk = Bytes::from_static(
+            b"data: {\"choices\":[{\"delta\":{\"reasoning_details\":\"hidden\"}}]}\n\n"
+        );
+
+        let output = normalize_reasoning_in_sse_chunk(&chunk).expect("modified chunk");
+        let output = String::from_utf8(output.to_vec()).expect("valid utf8");
+
+        assert!(output.contains("\"reasoning_details\":\"hidden\""));
+        assert!(output.contains("\"reasoning_content\":\"hidden\""));
+        assert!(output.contains("\"reasoning_text\":\"hidden\""));
     }
 
     #[test]
