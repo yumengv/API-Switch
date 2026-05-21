@@ -815,17 +815,19 @@ const handleToggleIntent = useCallback(async (entry: ApiEntry, enabled: boolean,
         return;
       }
 
+      if (hotKey) {
+        const currentOrder = localOrder ? [...localOrder] : displayEntries.map((e) => e.id);
+        const newOrder = [entry.id, ...currentOrder.filter((id) => id !== entry.id)];
+        await adapter.pool.toggle(entry.id, true);
+        setLocalOrder(currentOrder);
+        await adapter.pool.reorder(newOrder);
+        requestAnimationFrame(() => queryClient.invalidateQueries({ queryKey: entriesQueryKey }));
+        return;
+      }
+
       await adapter.pool.toggle(entry.id, enabled);
-      if (enabled && hotKey) {
-       // Move enabled entry to top of order when using hotkey (Ctrl/Cmd)
-       const currentOrder = localOrder ? [...localOrder] : displayEntries.map((e) => e.id);
-       const newOrder = [entry.id, ...currentOrder.filter((id) => id !== entry.id)];
-       setLocalOrder(newOrder);
-       reorderMutation.mutate(newOrder);
-     } else {
-       requestAnimationFrame(() => queryClient.invalidateQueries({ queryKey: entriesQueryKey }));
-     }
-    }, [adapter.pool, displayEntries, entriesQueryKey, filteredEntries, localOrder, queryClient, reorderMutation]);
+      requestAnimationFrame(() => queryClient.invalidateQueries({ queryKey: entriesQueryKey }));
+    }, [adapter.pool, displayEntries, entriesQueryKey, filteredEntries, localOrder, queryClient]);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
 
