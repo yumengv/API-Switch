@@ -537,7 +537,7 @@ return (
               <div className="relative">
                 <textarea
                   id="channel-apikey"
-                  rows={channel ? 2 : 4}
+                  rows={1}
                   value={form.api_key}
                   onChange={(event) => setValue('api_key', event.target.value)}
                   placeholder={channel ? undefined : t('channel.editor.multiKeyPlaceholder', '每行一个 API Key；获取模型使用第一行，保存时按行批量创建')}
