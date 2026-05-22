@@ -299,6 +299,13 @@ export function SettingsEditor({
                 <Switch checked={s.show_conversation_model} onCheckedChange={(value) => onChange("show_conversation_model", value)} />
               </div>
               <div className="flex items-center justify-between">
+                <div>
+                  <Label>{t("settings.general.disableReasoning")}</Label>
+                  <p className="text-xs text-muted-foreground">{t("settings.general.disableReasoningDesc")}</p>
+                </div>
+                <Switch checked={s.disable_reasoning} onCheckedChange={(value) => onChange("disable_reasoning", value)} />
+              </div>
+              <div className="flex items-center justify-between">
                 <Label>{t("settings.tray.autostart")}</Label>
                 {isWeb ? (
                   <span className="text-sm text-muted-foreground">{s.autostart ? t("common.enabled") : t("common.disabled")}</span>

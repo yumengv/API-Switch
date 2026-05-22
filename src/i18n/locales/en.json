@@ -460,6 +460,8 @@
       "defaultSortModeDesc": "Default model sort order for the API Management page",
       "showConversationModel": "Show conversation model (Experimental)",
       "showConversationModelDesc": "Append the resolved model name at the end of streamed replies",
+      "disableReasoning": "Disable reasoning requests",
+      "disableReasoningDesc": "When enabled, the middle layer removes incoming thinking/reasoning fields and sends reasoning_effort=none upstream",
       "currentVersion": "Version"
     },
     "guide": {

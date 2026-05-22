@@ -232,6 +232,7 @@ export interface AppSettings {
   // Remembers the default/restored group for the API Management UI only.
   active_group: string;
   show_conversation_model: boolean;
+  disable_reasoning: boolean;
   web_admin_enabled: boolean;
   web_admin_username: string;
   web_admin_password: string;
@@ -262,6 +263,7 @@ export const DEFAULT_SETTINGS: VersionedAppSettings = {
   default_sort_mode: "custom",
   active_group: "auto",
   show_conversation_model: false,
+  disable_reasoning: false,
   web_admin_enabled: false,
   web_admin_username: "admin",
   web_admin_password: "admin",

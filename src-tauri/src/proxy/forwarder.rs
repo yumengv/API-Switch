@@ -607,6 +607,36 @@ log_usage(
         .unwrap_or(ProxyError::AllProvidersFailed))
 }
 
+fn remove_reasoning_trigger_fields(value: &mut Value) {
+    let Some(obj) = value.as_object_mut() else {
+        return;
+    };
+
+    obj.remove("thinking");
+    obj.remove("reasoning");
+    obj.remove("reasoning_content");
+    obj.remove("reasoning_text");
+    obj.remove("reasoning_details");
+    obj.remove("reasoning_effort");
+}
+
+fn apply_disable_reasoning(body: &mut Value) {
+    remove_reasoning_trigger_fields(body);
+
+    if let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) {
+        for message in messages {
+            remove_reasoning_trigger_fields(message);
+        }
+    }
+
+    if let Some(obj) = body.as_object_mut() {
+        obj.insert(
+            "reasoning_effort".to_string(),
+            Value::String("none".to_string()),
+        );
+    }
+}
+
 async fn forward_single(
     state: &ProxyState,
     entry: &ApiEntry,
@@ -649,13 +679,19 @@ async fn forward_single(
         obj.remove(RAW_RESPONSES_REQUEST_FIELD);
     }
 
-    // Normalize reasoning fields in request messages (reasoning_content ↔ reasoning_text)
-    if let Some(messages) = upstream_body
-        .get_mut("messages")
-        .and_then(|m| m.as_array_mut())
-    {
-        for msg in messages.iter_mut() {
-            normalize_reasoning_fields(msg);
+    if state.settings.read().await.disable_reasoning {
+        apply_disable_reasoning(&mut upstream_body);
+    }
+
+    if !state.settings.read().await.disable_reasoning {
+        // Normalize reasoning fields in request messages (reasoning_content ↔ reasoning_text)
+        if let Some(messages) = upstream_body
+            .get_mut("messages")
+            .and_then(|m| m.as_array_mut())
+        {
+            for msg in messages.iter_mut() {
+                normalize_reasoning_fields(msg);
+            }
         }
     }
 
@@ -2583,7 +2619,7 @@ data: [DONE]\n",
         assert!(nonstream_response_has_valid_output(&tool_call));
     }
 
-#[test]
+    #[test]
     fn nonstream_response_reasoning_only_is_valid_output() {
         let reasoning_only = serde_json::json!({
             "choices": [{"message": {"role": "assistant", "content": "", "reasoning_content": "hidden"}}],
@@ -3046,4 +3082,63 @@ data: [DONE]\n"
         });
         assert!(stream_chunk_has_tool_calls(&message_function_call));
     }
+
+    #[test]
+    fn disable_reasoning_rewrites_four_model_requests() {
+        let models = [
+            "deepseek-v4-falsh",
+            "mimo-v2.5-pro",
+            "qwen/qwen3.5-122b-a10b",
+            "openai/gpt-oss-120b",
+        ];
+
+        for model in models {
+            let mut body = serde_json::json!({
+                "model": model,
+                "thinking": true,
+                "reasoning": { "effort": "high" },
+                "reasoning_content": "顶层思维链",
+                "reasoning_text": "顶层兼容思维链",
+                "reasoning_details": "顶层详情思维链",
+                "reasoning_effort": "high",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "你好"
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "历史回答",
+                        "thinking": true,
+                        "reasoning": { "effort": "medium" },
+                        "reasoning_content": "历史思维链",
+                        "reasoning_text": "历史兼容思维链",
+                        "reasoning_details": "历史详情思维链",
+                        "reasoning_effort": "medium"
+                    }
+                ]
+            });
+
+            apply_disable_reasoning(&mut body);
+
+            let obj = body.as_object().expect("请求体必须是对象");
+            assert!(!obj.contains_key("thinking"));
+            assert!(!obj.contains_key("reasoning"));
+            assert!(!obj.contains_key("reasoning_content"));
+            assert!(!obj.contains_key("reasoning_text"));
+            assert!(!obj.contains_key("reasoning_details"));
+            assert_eq!(obj.get("reasoning_effort"), Some(&Value::String("none".to_string())));
+
+            let messages = body.get("messages").and_then(Value::as_array).expect("必须保留消息数组");
+            let assistant = messages.get(1).and_then(Value::as_object).expect("必须保留助手消息");
+            assert!(!assistant.contains_key("thinking"));
+            assert!(!assistant.contains_key("reasoning"));
+            assert!(!assistant.contains_key("reasoning_content"));
+            assert!(!assistant.contains_key("reasoning_text"));
+            assert!(!assistant.contains_key("reasoning_details"));
+            assert!(!assistant.contains_key("reasoning_effort"));
+            assert_eq!(assistant.get("content"), Some(&Value::String("历史回答".to_string())));
+        }
+    }
 }
+

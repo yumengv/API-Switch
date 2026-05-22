@@ -460,6 +460,8 @@
       "defaultSortModeDesc": "模型管理页面的默认模型排序方式",
       "showConversationModel": "显示对话模型（实验）",
       "showConversationModelDesc": "流式回答结束时追加实际命中的模型名称",
+      "disableReasoning": "关闭思维链请求",
+      "disableReasoningDesc": "开启后，中间层会删除下游传入的 thinking/reasoning 字段，并向上游发送 reasoning_effort=none",
       "currentVersion": "当前版本"
     },
     "guide": {
