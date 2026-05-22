@@ -82,7 +82,7 @@ pub async fn handle_responses(
     //                      local_shell, custom (and any future hosted tools)
 
     let (mut chat_body, is_stream, model) = responses_to_openai_chat_request(&req_body);
-    forwarder::strip_downstream_reasoning_request(&mut chat_body);
+
 
     // Strip Responses-specific fields that shouldn't leak to upstream Chat API
     let responses_fields = [

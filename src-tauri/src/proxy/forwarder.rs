@@ -676,11 +676,7 @@ async fn forward_single(
 
     let mut upstream_body = body.clone();
     adapter.transform_request(&mut upstream_body, &entry.model);
-    if matches!(channel.api_type.as_str(), "claude" | "anthropic") {
-        strip_downstream_reasoning_request(&mut upstream_body);
-    } else {
-        strip_downstream_reasoning_request_for_openai_compatible(&mut upstream_body);
-    }
+
 
     // Normalize reasoning fields in request messages (reasoning_content ↔ reasoning_text)
     if let Some(messages) = upstream_body

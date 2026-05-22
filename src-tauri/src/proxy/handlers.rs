@@ -247,7 +247,7 @@ pub async fn handle_chat_completions(
 
     let mut body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse JSON: {e}")))?;
-    forwarder::strip_downstream_reasoning_request(&mut body);
+
 
     let requested_model = normalize_requested_model(body.get("model").and_then(|m| m.as_str()));
 
@@ -324,7 +324,7 @@ pub async fn handle_messages(
 
     // Convert Claude format to OpenAI format for internal routing
     let mut openai_body = claude_to_openai_request(&body);
-    forwarder::strip_downstream_reasoning_request(&mut openai_body);
+
 
     let requested_model =
         normalize_requested_model(openai_body.get("model").and_then(|m| m.as_str()));
