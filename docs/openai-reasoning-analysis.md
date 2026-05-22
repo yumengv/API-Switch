@@ -1662,4 +1662,170 @@ forwarder.rs strip 逻辑修改  ←── 根因，必须先改
 
 ---
 
-*文档版本: 2.7 (最终审核版) | 最后更新: 2026-05-22*
+### 12.10 修改后测试方案
+
+> 本节用于重启后接续。修改完成后按此方案执行测试。
+
+#### 12.10.1 测试前置条件
+
+| 条件 | 说明 |
+|------|------|
+| 代码修改完成 | handlers.rs:250, :327, responses_handler.rs:85, forwarder.rs:679-683 的 strip 调用已移除 |
+| 编译通过 | `cargo build` 无错误 |
+| 单元测试通过 | `cargo test` 无失败 |
+| API Switch 运行 | 本地 9090 端口正常运行 |
+
+#### 12.10.2 测试环境
+
+| 环境 | 端点 | 模型 | 用途 |
+|------|------|------|------|
+| 环境 A | http://127.0.0.1:9090 | mimo-v2.5 | 推理模型测试 |
+| 环境 A | http://127.0.0.1:9090 | deepseek-v4-flash | 推理模型测试 |
+| 环境 A | http://127.0.0.1:9090 | meta/llama-3.3-70b-instruct | 非推理模型测试 |
+
+#### 12.10.3 测试用例
+
+**T1: Chat + reasoning_effort → 推理模型**
+```bash
+curl -X POST http://127.0.0.1:9090/v1/chat/completions \
+  -H "Authorization: Bearer test" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"mimo-v2.5","messages":[{"role":"user","content":"What is 2+2?"}],"reasoning_effort":"medium","max_tokens":100}'
+```
+预期：Status 200，response 中包含 `reasoning_content` 字段
+
+**T2: Chat + reasoning_effort → 非推理模型**
+```bash
+curl -X POST http://127.0.0.1:9090/v1/chat/completions \
+  -H "Authorization: Bearer test" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"meta/llama-3.3-70b-instruct","messages":[{"role":"user","content":"What is 2+2?"}],"reasoning_effort":"medium","max_tokens":100}'
+```
+预期：Status 200，无 `reasoning_content`（非推理模型忽略 reasoning_effort）
+
+**T3: Chat without reasoning → 推理模型**
+```bash
+curl -X POST http://127.0.0.1:9090/v1/chat/completions \
+  -H "Authorization: Bearer test" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"mimo-v2.5","messages":[{"role":"user","content":"What is 2+2?"}],"max_tokens":100}'
+```
+预期：Status 200，推理模型可能仍返回 `reasoning_content`（模型特性）
+
+**T4: Responses + reasoning → Chat 上游**
+```bash
+curl -X POST http://127.0.0.1:9090/v1/responses \
+  -H "Authorization: Bearer test" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"mimo-v2.5","input":"What is 2+2?","reasoning":{"effort":"medium"},"max_output_tokens":100}'
+```
+预期：Status 200，response 中包含 reasoning output item
+
+**T5: Responses without reasoning → Chat 上游**
+```bash
+curl -X POST http://127.0.0.1:9090/v1/responses \
+  -H "Authorization: Bearer test" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"mimo-v2.5","input":"What is 2+2?","max_output_tokens":100}'
+```
+预期：Status 200，正常返回
+
+**T6: Chat + reasoning object → 推理模型**
+```bash
+curl -X POST http://127.0.0.1:9090/v1/chat/completions \
+  -H "Authorization: Bearer test" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"mimo-v2.5","messages":[{"role":"user","content":"What is 2+2?"}],"reasoning":{"effort":"high"},"max_tokens":100}'
+```
+预期：Status 200，response 中包含 `reasoning_content` 字段
+
+**T7: Chat + reasoning_effort → deepseek-v4-flash**
+```bash
+curl -X POST http://127.0.0.1:9090/v1/chat/completions \
+  -H "Authorization: Bearer test" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"What is 2+2?"}],"reasoning_effort":"medium","max_tokens":100}'
+```
+预期：Status 200，response 中包含 `reasoning_content` 字段
+
+#### 12.10.4 测试结果记录表
+
+| 测试 | 场景 | Status | reasoning_content | 结果 | 备注 |
+|------|------|--------|-------------------|------|------|
+| T1 | Chat + reasoning_effort → mimo | | | | |
+| T2 | Chat + reasoning_effort → llama | | | | |
+| T3 | Chat without reasoning → mimo | | | | |
+| T4 | Responses + reasoning → mimo | | | | |
+| T5 | Responses without reasoning → mimo | | | | |
+| T6 | Chat + reasoning object → mimo | | | | |
+| T7 | Chat + reasoning_effort → deepseek | | | | |
+
+#### 12.10.5 PowerShell 快速测试脚本
+
+```powershell
+# 测试脚本：重启后运行此脚本执行所有测试
+$BASE_URL = "http://127.0.0.1:9090"
+$API_KEY = "test"
+
+Write-Host "=== Reasoning 修改后测试 ===" -ForegroundColor Cyan
+
+# T1
+Write-Host "T1: Chat + reasoning_effort → mimo" -ForegroundColor Yellow
+$body = '{"model":"mimo-v2.5","messages":[{"role":"user","content":"What is 2+2?"}],"reasoning_effort":"medium","max_tokens":100}'
+try {
+    $resp = Invoke-WebRequest -Uri "$BASE_URL/v1/chat/completions" -Method POST -Headers @{"Authorization"="Bearer $API_KEY";"Content-Type"="application/json"} -Body $body -TimeoutSec 30
+    $json = $resp.Content | ConvertFrom-Json
+    $hasReasoning = $null -ne $json.choices[0].message.reasoning_content
+    Write-Host "  Status: $($resp.StatusCode) | Has reasoning_content: $hasReasoning" -ForegroundColor $(if($hasReasoning){"Green"}else{"Yellow"})
+} catch { Write-Host "  ERROR: $($_.Exception.Message)" -ForegroundColor Red }
+
+# T2
+Write-Host "T2: Chat + reasoning_effort → llama (非推理)" -ForegroundColor Yellow
+$body = '{"model":"meta/llama-3.3-70b-instruct","messages":[{"role":"user","content":"What is 2+2?"}],"reasoning_effort":"medium","max_tokens":100}'
+try {
+    $resp = Invoke-WebRequest -Uri "$BASE_URL/v1/chat/completions" -Method POST -Headers @{"Authorization"="Bearer $API_KEY";"Content-Type"="application/json"} -Body $body -TimeoutSec 30
+    $json = $resp.Content | ConvertFrom-Json
+    $hasReasoning = $null -ne $json.choices[0].message.reasoning_content
+    Write-Host "  Status: $($resp.StatusCode) | Has reasoning_content: $hasReasoning (expected: false)" -ForegroundColor $(if(-not $hasReasoning){"Green"}else{"Yellow"})
+} catch { Write-Host "  ERROR: $($_.Exception.Message)" -ForegroundColor Red }
+
+# T3
+Write-Host "T3: Chat without reasoning → mimo" -ForegroundColor Yellow
+$body = '{"model":"mimo-v2.5","messages":[{"role":"user","content":"What is 2+2?"}],"max_tokens":100}'
+try {
+    $resp = Invoke-WebRequest -Uri "$BASE_URL/v1/chat/completions" -Method POST -Headers @{"Authorization"="Bearer $API_KEY";"Content-Type"="application/json"} -Body $body -TimeoutSec 30
+    Write-Host "  Status: $($resp.StatusCode)" -ForegroundColor Green
+} catch { Write-Host "  ERROR: $($_.Exception.Message)" -ForegroundColor Red }
+
+# T4
+Write-Host "T4: Responses + reasoning → mimo" -ForegroundColor Yellow
+$body = '{"model":"mimo-v2.5","input":"What is 2+2?","reasoning":{"effort":"medium"},"max_output_tokens":100}'
+try {
+    $resp = Invoke-WebRequest -Uri "$BASE_URL/v1/responses" -Method POST -Headers @{"Authorization"="Bearer $API_KEY";"Content-Type"="application/json"} -Body $body -TimeoutSec 30
+    Write-Host "  Status: $($resp.StatusCode)" -ForegroundColor Green
+} catch { Write-Host "  ERROR: $($_.Exception.Message)" -ForegroundColor Red }
+
+# T5
+Write-Host "T5: Responses without reasoning → mimo" -ForegroundColor Yellow
+$body = '{"model":"mimo-v2.5","input":"What is 2+2?","max_output_tokens":100}'
+try {
+    $resp = Invoke-WebRequest -Uri "$BASE_URL/v1/responses" -Method POST -Headers @{"Authorization"="Bearer $API_KEY";"Content-Type"="application/json"} -Body $body -TimeoutSec 30
+    Write-Host "  Status: $($resp.StatusCode)" -ForegroundColor Green
+} catch { Write-Host "  ERROR: $($_.Exception.Message)" -ForegroundColor Red }
+
+Write-Host "=== 测试完成 ===" -ForegroundColor Cyan
+```
+
+#### 12.10.6 测试通过标准
+
+| 标准 | 说明 |
+|------|------|
+| 所有测试 Status 200 | 无 400/500 错误 |
+| 推理模型返回 reasoning_content | mimo-v2.5, deepseek-v4-flash 正常返回 |
+| 非推理模型不返回 reasoning_content | llama-3.3-70b 符合预期 |
+| 无 reasoning 请求时不添加字段 | 不凭空生成 reasoning |
+| 流式 SSE 正常 | 无中断或格式错误 |
+
+---
+
+*文档版本: 2.8 (含测试方案) | 最后更新: 2026-05-22*
