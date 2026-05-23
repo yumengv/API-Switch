@@ -1,14 +1,12 @@
-use crate::database::Database;
 use crate::error::AppError;
 use crate::proxy::protocol::get_adapter;
-use crate::refresh_tray_if_enabled;
 use crate::services::api_key_utils::primary_api_key;
 use crate::services::log_service::{insert_test_usage_log, TestUsageLogInput};
 use crate::AppState;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::time::Instant;
-use tauri::{Emitter, State};
+use tauri::State;
 
 #[derive(Debug, Serialize)]
 pub struct TestChatResponse {
@@ -30,42 +28,69 @@ pub struct TestChatMessage {
     pub content: String,
 }
 
-fn refresh_entries(app: &tauri::AppHandle) {
-    let _ = app.emit("entries-changed", ());
-    refresh_tray_if_enabled(app);
-}
-
-fn mark_entry_available(
-    db: &Database,
-    app: &tauri::AppHandle,
-    entry_id: &str,
-    response_ms: &str,
-) -> Result<(), AppError> {
-    db.update_entry_response_ms(entry_id, response_ms)?;
-    db.toggle_entry(entry_id, true)?;
-    db.set_entry_cooldown(entry_id, None)?;
-    crate::state_version::bump("pool");
-    refresh_entries(app);
-    Ok(())
-}
-
-fn mark_entry_unavailable(
-    db: &Database,
-    app: &tauri::AppHandle,
-    entry_id: &str,
-) -> Result<(), AppError> {
-    db.update_entry_response_ms(entry_id, "X")?;
-    db.toggle_entry(entry_id, false)?;
-    crate::state_version::bump("pool");
-    refresh_entries(app);
-    Ok(())
-}
-
 fn non_empty_message_field<'a>(message: &'a Value, field: &str) -> Option<&'a str> {
     message
         .get(field)
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
+}
+
+fn extract_text_from_content_block(block: &Value) -> String {
+    block
+        .get("text")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string()
+}
+
+fn extract_content_from_message(message: &Value) -> String {
+    // 先尝试直接取字符串 content
+    if let Some(text) = non_empty_message_field(message, "content") {
+        return text.to_string();
+    }
+
+    // content 可能是数组（content blocks）
+    if let Some(arr) = message.get("content").and_then(Value::as_array) {
+        let texts: Vec<String> = arr
+            .iter()
+            .filter_map(|block| {
+                if block.get("type").and_then(Value::as_str) == Some("text") {
+                    Some(extract_text_from_content_block(block))
+                } else {
+                    None
+                }
+            })
+            .filter(|t| !t.is_empty())
+            .collect();
+        if !texts.is_empty() {
+            return texts.join("\n");
+        }
+    }
+
+    // fallback: 尝试序列化 content 为字符串
+    if let Some(content) = message.get("content") {
+        if !content.is_null() {
+            if let Some(s) = content.as_str() {
+                if !s.trim().is_empty() {
+                    return s.to_string();
+                }
+            } else {
+                // 不是字符串（可能是数组），尝试 JSON 序列化作为兜底展示
+                if let Ok(s) = serde_json::to_string(content) {
+                    if s != "null" {
+                        return s;
+                    }
+                }
+            }
+        }
+    }
+
+    // fallback: reasoning 字段
+    non_empty_message_field(message, "reasoning_content")
+        .or_else(|| non_empty_message_field(message, "reasoning_text"))
+        .or_else(|| non_empty_message_field(message, "reasoning_details"))
+        .unwrap_or("")
+        .to_string()
 }
 
 fn extract_test_chat_content(body: &Value) -> String {
@@ -75,17 +100,14 @@ fn extract_test_chat_content(body: &Value) -> String {
         .flatten()
         .filter_map(|choice| choice.get("message"))
         .find_map(|message| {
-            non_empty_message_field(message, "content")
-                .or_else(|| non_empty_message_field(message, "reasoning_content"))
-                .or_else(|| non_empty_message_field(message, "reasoning_text"))
-                .or_else(|| non_empty_message_field(message, "reasoning_details"))
+            let content = extract_content_from_message(message);
+            if content.trim().is_empty() {
+                None
+            } else {
+                Some(content)
+            }
         })
-        .unwrap_or("")
-        .to_string()
-}
-
-fn truncate_for_log(value: &str, max_chars: usize) -> String {
-    value.chars().take(max_chars).collect::<String>()
+        .unwrap_or_default()
 }
 
 fn apply_disable_reasoning_for_test_chat(body: &mut Value) {
@@ -103,7 +125,7 @@ fn apply_disable_reasoning_for_test_chat(body: &mut Value) {
 
 #[tauri::command]
 pub async fn test_chat(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     state: State<'_, AppState>,
     entry_id: String,
     messages: Vec<TestChatMessage>,
@@ -167,7 +189,6 @@ pub async fn test_chat(
                     error_preview: None,
                 },
             );
-            mark_entry_unavailable(&db, &app, &entry.id)?;
             return Err(AppError::Network(message));
         }
     };
@@ -199,7 +220,7 @@ pub async fn test_chat(
                     error_preview: None,
                 },
             );
-            mark_entry_unavailable(&db, &app, &entry.id)?;
+            
             return Err(AppError::Network(message));
         }
     };
@@ -230,7 +251,7 @@ pub async fn test_chat(
                 error_preview: Some(&body),
             },
         );
-        mark_entry_unavailable(&db, &app, &entry.id)?;
+        
         return Err(AppError::Proxy(error_message));
     }
 
@@ -259,7 +280,7 @@ pub async fn test_chat(
                     error_preview: None,
                 },
             );
-            mark_entry_unavailable(&db, &app, &entry.id)?;
+            
             return Err(AppError::Internal(message));
         }
     };
@@ -285,7 +306,7 @@ pub async fn test_chat(
                 error_preview: None,
             },
         );
-        mark_entry_unavailable(&db, &app, &entry.id)?;
+        
         return Err(AppError::Internal(message.to_string()));
     }
 
@@ -293,7 +314,6 @@ pub async fn test_chat(
         Ok(body) => body,
         Err(e) => {
             let message = format!("Failed to parse response: {e}");
-            let error_preview = truncate_for_log(&response_body, 1000);
             insert_test_usage_log(
                 &db,
                 None,
@@ -310,10 +330,10 @@ pub async fn test_chat(
                     error_message: Some(&message),
                     error_kind: Some("parse_error"),
                     response_ms: Some("X"),
-                    error_preview: Some(&error_preview),
+                    error_preview: Some(&response_body),
                 },
             );
-            mark_entry_unavailable(&db, &app, &entry.id)?;
+            
             return Err(AppError::Internal(message));
         }
     };
@@ -327,7 +347,6 @@ pub async fn test_chat(
 
     if content.trim().is_empty() {
         let message = "empty_response_content";
-        let error_preview = truncate_for_log(&response_body, 1000);
         insert_test_usage_log(
             &db,
             None,
@@ -344,10 +363,10 @@ pub async fn test_chat(
                 error_message: Some(message),
                 error_kind: Some("empty_content"),
                 response_ms: Some("X"),
-                error_preview: Some(&error_preview),
+                error_preview: Some(&response_body),
             },
         );
-        mark_entry_unavailable(&db, &app, &entry.id)?;
+        
         return Err(AppError::Internal(message.to_string()));
     }
 
@@ -378,11 +397,9 @@ pub async fn test_chat(
             error_message: None,
             error_kind: None,
             response_ms: Some(&response_ms),
-            error_preview: None,
+            error_preview: Some(&response_body),
         },
     );
-
-    mark_entry_available(&db, &app, &entry.id, &response_ms)?;
 
     Ok(TestChatResponse {
         content,
