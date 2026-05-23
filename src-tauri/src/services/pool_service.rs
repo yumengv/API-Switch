@@ -237,7 +237,7 @@ pub async fn test_entry_latency(
 
     let mut upstream_body = json!({
         "model": entry.model,
-        "messages": [{"role": "user", "content": "请只回复 OK"}],
+        "messages": [{"role": "user", "content": "Say OK"}],
         "stream": false,
     });
     adapter.transform_request(&mut upstream_body, &entry.model);

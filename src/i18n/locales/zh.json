@@ -1,4 +1,4 @@
-﻿{
+{
   "app": {
     "title": "API Switch"
   },
@@ -398,6 +398,9 @@
   },
   "settings": {
     "title": "系统设置",
+    "ports": {
+      "title": "端口管理"
+    },
     "proxy": {
       "title": "代理设置",
       "enabled": "启用代理",

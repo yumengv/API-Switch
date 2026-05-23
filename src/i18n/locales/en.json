@@ -1,4 +1,4 @@
-﻿{
+{
   "app": {
     "title": "API Switch"
   },
@@ -398,6 +398,9 @@
   },
   "settings": {
     "title": "Settings",
+    "ports": {
+      "title": "Port Management"
+    },
     "proxy": {
       "title": "Proxy Settings",
       "enabled": "Enable Proxy",
