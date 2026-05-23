@@ -676,18 +676,6 @@ async fn forward_single(
         apply_disable_reasoning(&mut upstream_body);
     }
 
-    if !state.settings.read().await.disable_reasoning {
-        // Normalize reasoning fields in request messages (reasoning_content ↔ reasoning_text)
-        if let Some(messages) = upstream_body
-            .get_mut("messages")
-            .and_then(|m| m.as_array_mut())
-        {
-            for msg in messages.iter_mut() {
-                normalize_reasoning_fields(msg);
-            }
-        }
-    }
-
     // Call middleware on_request
     let ctx = RequestContext {
         caller_kind: caller_kind.clone(),

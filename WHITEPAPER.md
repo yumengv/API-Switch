@@ -360,7 +360,7 @@ Access Key 用于客户端访问代理时的身份识别和可选鉴权。关闭
 
 | 设置项 | 默认值 | 作用 |
 |--------|--------|------|
-| `disable_reasoning` | `false` | 全局关闭 reasoning/thinking 请求触发字段；开启后在公共转发层统一清理请求顶层与 `messages[]` 对象中的思维链字段，并向上游发送 `reasoning_effort = "none"` |
+| `disable_reasoning` | `true` | 全局控制 reasoning/thinking 是否传递到上游。默认关闭（`true`），删除 thinking/reasoning 触发字段；开启后原样传递上游，不清理任何字段 |
 
 ---
 
@@ -432,21 +432,22 @@ Client → POST /v1/chat/completions
   └─ 5. insert_usage_log()
 ```
 
-### 8.3 全局关闭 reasoning/thinking 请求
+### 8.3 全局控制 reasoning/thinking 请求
 
-设置项 `disable_reasoning` 用于控制是否在公共转发层关闭上游 reasoning/thinking 请求能力。该设置默认关闭，存储在 SQLite `config` 表，并通过 `AppSettings` 暴露给 Desktop 与 Web Admin 设置页。
+设置项 `disable_reasoning` 控制 reasoning/thinking 数据是否传递到上游。该设置**默认开启**（`true`），即默认不传递 reasoning 数据，存储在 SQLite `config` 表，并通过 `AppSettings` 暴露给 Desktop 与 Web Admin 设置页。
 
 处理位置固定在各协议适配器完成 `transform_request()` 后、`reqwest::send()` 前。此时 Claude / Gemini / Azure / Responses 等入口已经归一为 OpenAI-compatible 上游请求体，因此只需要在 `forwarder.rs` 的公共路径执行一次改写，避免五套协议分别实现造成遗漏或行为分叉。
 
-开关开启时：
+`disable_reasoning = true`（默认）时：
 
 - 删除请求体顶层的 `thinking`、`reasoning`、`reasoning_content`、`reasoning_text`、`reasoning_details`、`reasoning_effort`。
 - 删除 `messages[]` 中每个对象上的同名字段。
-- 在请求体顶层强制写入 `reasoning_effort: "none"`。
-- 跳过请求侧 reasoning 字段归一化，避免从 `reasoning_text` / `reasoning_details` 重新生成 `reasoning_content`。
+- 不往上游注入任何字段。
 - 不递归改写 `messages[].content` 等用户文本内容，避免误伤真实输入。
 
-该开关不按渠道或模型做特例判断；部分上游若不接受 `reasoning_effort`，可能在开关开启后返回 400，错误由正常上游失败日志记录与 failover 流程处理。
+`disable_reasoning = false` 时：
+
+- reasoning/thinking 字段原样传递上游，不做任何处理。
 
 ### 8.4 路由匹配顺序（唯一真相）
 

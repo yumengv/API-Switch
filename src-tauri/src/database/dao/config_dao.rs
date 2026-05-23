@@ -56,7 +56,7 @@ impl Default for AppSettings {
             web_admin_password: "admin".to_string(),
             web_admin_port: 9099,
             show_conversation_model: false,
-            disable_reasoning: false,
+            disable_reasoning: true,
             app_version: "0.6.9".to_string(),
             locale: String::new(),
             theme: String::new(),

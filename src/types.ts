@@ -263,7 +263,7 @@ export const DEFAULT_SETTINGS: VersionedAppSettings = {
   default_sort_mode: "custom",
   active_group: "auto",
   show_conversation_model: false,
-  disable_reasoning: false,
+  disable_reasoning: true,
   web_admin_enabled: false,
   web_admin_username: "admin",
   web_admin_password: "admin",
