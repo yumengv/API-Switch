@@ -4,7 +4,6 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
-import { Toaster } from 'sonner';
 import { cn } from '@/lib/utils';
 import type { AdminStatus, AppSettings, ProxyStatus } from '@/types';
 
@@ -140,7 +139,6 @@ export function MainShell({
         {children}
       </div>
 
-      <Toaster position="top-center" richColors closeButton />
     </div>
   );
 }

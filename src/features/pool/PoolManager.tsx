@@ -818,7 +818,10 @@ const handleToggleIntent = useCallback(async (entry: ApiEntry, enabled: boolean,
 
       if (hotKey) {
         (document.activeElement as HTMLElement)?.blur();
+        const scrollY = window.scrollY;
         await adapter.pool.toggle(entry.id, true, { pinToTop: true });
+        queryClient.invalidateQueries({ queryKey: entriesQueryKey });
+        requestAnimationFrame(() => window.scrollTo(0, scrollY));
         return;
       }
 
