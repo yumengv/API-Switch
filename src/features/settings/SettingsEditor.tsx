@@ -64,102 +64,140 @@ export function SettingsEditor({
           <CardTitle className="text-base">{t("settings.ports.title")}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <div>
-                <Label>{t("settings.proxy.enabled")}</Label>
-              </div>
-              <Switch
-                checked={proxyStatus?.running ?? s.proxy_enabled}
-                onCheckedChange={(value) => {
-                  if (onProxyToggle) {
-                    onProxyToggle(value);
-                  } else {
-                    onChange("proxy_enabled", value);
-                  }
-                }}
-              />
-            </div>
-            <div className="flex items-center justify-between">
-              <Label>{t("settings.proxy.port")}</Label>
-              <Input
-                type="number"
-                className="w-32"
-                value={editPort}
-                onFocus={() => { portEditing.current = true; }}
-                onChange={(event) => setEditPort(parseInt(event.target.value) || 9090)}
-                onBlur={() => {
-                  portEditing.current = false;
-                  onChange("listen_port", editPort);
-                }}
-              />
-            </div>
-            {(proxyStatus?.running ?? s.proxy_enabled) && (
-              <div className="text-sm text-muted-foreground">
-                {t("settings.proxy.address")}: http://127.0.0.1:{proxyStatus?.port ?? s.listen_port}
-              </div>
-            )}
-          </div>
-          <hr className="border-border" />
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <div>
-                <Label>{t("settings.webAdmin.enabled")}</Label>
-                <p className="text-xs text-muted-foreground">{t("settings.webAdmin.enabledDesc")}</p>
-              </div>
-              <Switch checked={s.web_admin_enabled} onCheckedChange={(value) => onChange("web_admin_enabled", value)} />
-            </div>
-            <div className="flex items-center justify-between">
-              <Label>{t("settings.webAdmin.port")}</Label>
-              <Input
-                type="number"
-                min={1}
-                max={65535}
-                className="w-32"
-                value={editAdminPort}
-                onFocus={() => { adminPortEditing.current = true; }}
-                onChange={(event) => setEditAdminPort(Math.min(65535, Math.max(1, parseInt(event.target.value) || 9099)))}
-                onBlur={() => {
-                  adminPortEditing.current = false;
-                  onChange("web_admin_port", editAdminPort);
-                }}
-              />
-            </div>
+          {isWeb ? (
             <div className="space-y-2">
-              <Label>{t("settings.webAdmin.username")}</Label>
-              <Input
-                value={editUsername}
-                onFocus={() => { usernameEditing.current = true; }}
-                onChange={(event) => setEditUsername(event.target.value)}
-                onBlur={() => {
-                  usernameEditing.current = false;
-                  onChange("web_admin_username", editUsername);
-                }}
-              />
+              <div className="space-y-2">
+                <Label>{t("settings.webAdmin.username")}</Label>
+                <Input
+                  value={editUsername}
+                  onFocus={() => { usernameEditing.current = true; }}
+                  onChange={(event) => setEditUsername(event.target.value)}
+                  onBlur={() => {
+                    usernameEditing.current = false;
+                    onChange("web_admin_username", editUsername);
+                  }}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>{t("settings.webAdmin.password")}</Label>
+                <Input
+                  type="password"
+                  value={editPassword}
+                  placeholder={t("settings.webAdmin.passwordPlaceholder")}
+                  onFocus={() => { passwordEditing.current = true; }}
+                  onChange={(event) => setEditPassword(event.target.value)}
+                  onBlur={() => {
+                    passwordEditing.current = false;
+                    if (editPassword) {
+                      onChange("web_admin_password", editPassword);
+                    }
+                  }}
+                />
+              </div>
+              <div className="text-sm text-muted-foreground pt-1">
+                {t("settings.webAdmin.address")}: http://127.0.0.1:{s.web_admin_port}/admin
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label>{t("settings.webAdmin.password")}</Label>
-              <Input
-                type="password"
-                value={editPassword}
-                placeholder={t("settings.webAdmin.passwordPlaceholder")}
-                onFocus={() => { passwordEditing.current = true; }}
-                onChange={(event) => setEditPassword(event.target.value)}
-                onBlur={() => {
-                  passwordEditing.current = false;
-                  if (editPassword) {
-                    onChange("web_admin_password", editPassword);
-                  }
-                }}
-              />
-              <p className="text-xs text-muted-foreground">
-                {t("settings.webAdmin.singlePortDesc")}
-              </p>
-            </div>
-            {s.web_admin_enabled && s.web_admin_username && s.web_admin_password && (
-              <div className="text-sm text-muted-foreground">{t("settings.webAdmin.address")}: http://127.0.0.1:{s.web_admin_port}/admin</div>
-            )}
-          </div>
+          ) : (
+            <>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label>{t("settings.proxy.enabled")}</Label>
+                  </div>
+                  <Switch
+                    checked={proxyStatus?.running ?? s.proxy_enabled}
+                    onCheckedChange={(value) => {
+                      if (onProxyToggle) {
+                        onProxyToggle(value);
+                      } else {
+                        onChange("proxy_enabled", value);
+                      }
+                    }}
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <Label>{t("settings.proxy.port")}</Label>
+                  <Input
+                    type="number"
+                    className="w-32"
+                    value={editPort}
+                    onFocus={() => { portEditing.current = true; }}
+                    onChange={(event) => setEditPort(parseInt(event.target.value) || 9090)}
+                    onBlur={() => {
+                      portEditing.current = false;
+                      onChange("listen_port", editPort);
+                    }}
+                  />
+                </div>
+                {(proxyStatus?.running ?? s.proxy_enabled) && (
+                  <div className="text-sm text-muted-foreground">
+                    {t("settings.proxy.address")}: http://127.0.0.1:{proxyStatus?.port ?? s.listen_port}
+                  </div>
+                )}
+              </div>
+              <hr className="border-border" />
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label>{t("settings.webAdmin.enabled")}</Label>
+                    <p className="text-xs text-muted-foreground">{t("settings.webAdmin.enabledDesc")}</p>
+                  </div>
+                  <Switch checked={s.web_admin_enabled} onCheckedChange={(value) => onChange("web_admin_enabled", value)} />
+                </div>
+                <div className="flex items-center justify-between">
+                  <Label>{t("settings.webAdmin.port")}</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={65535}
+                    className="w-32"
+                    value={editAdminPort}
+                    onFocus={() => { adminPortEditing.current = true; }}
+                    onChange={(event) => setEditAdminPort(Math.min(65535, Math.max(1, parseInt(event.target.value) || 9099)))}
+                    onBlur={() => {
+                      adminPortEditing.current = false;
+                      onChange("web_admin_port", editAdminPort);
+                    }}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>{t("settings.webAdmin.username")}</Label>
+                  <Input
+                    value={editUsername}
+                    onFocus={() => { usernameEditing.current = true; }}
+                    onChange={(event) => setEditUsername(event.target.value)}
+                    onBlur={() => {
+                      usernameEditing.current = false;
+                      onChange("web_admin_username", editUsername);
+                    }}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>{t("settings.webAdmin.password")}</Label>
+                  <Input
+                    type="password"
+                    value={editPassword}
+                    placeholder={t("settings.webAdmin.passwordPlaceholder")}
+                    onFocus={() => { passwordEditing.current = true; }}
+                    onChange={(event) => setEditPassword(event.target.value)}
+                    onBlur={() => {
+                      passwordEditing.current = false;
+                      if (editPassword) {
+                        onChange("web_admin_password", editPassword);
+                      }
+                    }}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {t("settings.webAdmin.singlePortDesc")}
+                  </p>
+                </div>
+                {s.web_admin_enabled && s.web_admin_username && s.web_admin_password && (
+                  <div className="text-sm text-muted-foreground">{t("settings.webAdmin.address")}: http://127.0.0.1:{s.web_admin_port}/admin</div>
+                )}
+              </div>
+            </>
+          )}
         </CardContent>
       </Card>
 

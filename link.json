@@ -1,0 +1,50 @@
+[
+  {
+    "id": "opencode",
+    "name": "OpenCode CLI",
+    "description": "自动配置 OpenCode CLI 连接到本地代理",
+    "icon": "ExternalLink",
+    "configMode": "write",
+    "config": {
+      "file": "~/.config/opencode/opencode.jsonc",
+      "format": "jsonc",
+      "fields": {
+        "baseUrl": "http://127.0.0.1:{port}/v1",
+        "apiKey": "{access_key}",
+        "model": "auto"
+      }
+    }
+  },
+  {
+    "id": "codex",
+    "name": "Codex CLI",
+    "description": "自动配置 Codex CLI 连接到本地代理",
+    "icon": "Terminal",
+    "configMode": "write",
+    "config": {
+      "file": "~/.codex/config.toml",
+      "format": "toml",
+      "fields": {
+        "baseUrl": "http://127.0.0.1:{port}/v1",
+        "apiKey": "{access_key}",
+        "model": "auto"
+      }
+    }
+  },
+  {
+    "id": "claude-code",
+    "name": "Claude Code",
+    "description": "自动配置 Claude Code 连接到本地代理",
+    "icon": "MessageSquare",
+    "configMode": "write",
+    "config": {
+      "file": "~/.claude/settings.json",
+      "format": "json",
+      "fields": {
+        "baseUrl": "http://127.0.0.1:{port}",
+        "apiKey": "{access_key}",
+        "model": "auto"
+      }
+    }
+  }
+]
