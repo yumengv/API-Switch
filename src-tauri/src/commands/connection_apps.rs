@@ -285,7 +285,7 @@ mod tests {
         let apps = list_connection_apps_from_embedded().expect("应能解析内置连接应用清单");
         let ids: Vec<&str> = apps.iter().map(|app| app.id.as_str()).collect();
 
-        assert_eq!(ids, vec!["opencode", "codex", "claude-code", "workbuddy"]);
+        assert_eq!(ids, vec!["opencode", "codex", "claude-code"]);
         assert!(apps.iter().all(|app| app.config.file.is_some()));
     }
 
@@ -309,11 +309,6 @@ mod tests {
         assert!(claude.contains("\"ANTHROPIC_AUTH_TOKEN\": \"sk-test\""));
         assert!(claude.contains("\"ANTHROPIC_BASE_URL\": \"http://127.0.0.1:19090\""));
         assert!(claude.contains("\"ANTHROPIC_MODEL\": \"auto\""));
-
-        let workbuddy = render_connection_content("workbuddy", 19090, "sk-test").expect("Workbuddy 应生成配置");
-        assert!(workbuddy.contains("\"url\": \"http://127.0.0.1:19090/v1\""));
-        assert!(workbuddy.contains("\"apiKey\": \"sk-test\""));
-        assert!(!workbuddy.contains("/v1/chat/completions"));
     }
 
     #[test]

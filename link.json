@@ -31,16 +31,5 @@
       "file": "~/.claude/settings.json",
       "format": "json"
     }
-  },
-  {
-    "id": "workbuddy",
-    "name": "Workbuddy",
-    "description": "自动配置 Workbuddy 连接到本地代理",
-    "icon": "Link",
-    "configMode": "write",
-    "config": {
-      "file": "~/.workbuddy/models.json",
-      "format": "json"
-    }
   }
 ]
