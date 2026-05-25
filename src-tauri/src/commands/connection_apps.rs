@@ -117,37 +117,35 @@ fn render_connection_content(id: &str, port: i32, access_key: &str) -> Result<St
         "opencode" => Ok(format!(
             r#"{{
   "provider": {{
-    "api-switch": {{
-      "npm": "@ai-sdk/openai-compatible",
+    "{port}": {{
       "options": {{
-        "baseURL": "{base_v1}"
+        "baseURL": "{base_v1}",
+        "apiKey": "{access_key}"
+      }},
+      "models": {{
+        "auto": {{"name": "auto"}}
       }}
     }}
-  }},
-  "model": "api-switch/auto"
+  }}
 }}
 "#
         )),
         "codex" => Ok(format!(
             r#"model = "auto"
 model_provider = "api_switch"
-sandbox_mode = "danger-full-access"
 
 [model_providers.api_switch]
 name = "API-Switch"
 base_url = "{base_v1}"
 api_key = "{access_key}"
-wire_api = "responses"
-request_max_retries = 1
-stream_max_retries = 1
-stream_idle_timeout_ms = 60000
 "#
         )),
         "claude-code" => Ok(format!(
             r#"{{
   "env": {{
+    "ANTHROPIC_AUTH_TOKEN": "{access_key}",
     "ANTHROPIC_BASE_URL": "{base_root}",
-    "ANTHROPIC_AUTH_TOKEN": "{access_key}"
+    "ANTHROPIC_MODEL": "auto"
   }}
 }}
 "#
@@ -294,21 +292,23 @@ mod tests {
     #[test]
     fn render_connection_content_uses_exact_app_templates() {
         let opencode = render_connection_content("opencode", 19090, "sk-test").expect("OpenCode 应生成配置");
-        assert!(opencode.contains("\"npm\": \"@ai-sdk/openai-compatible\""));
+        assert!(opencode.contains("\"19090\":"));
         assert!(opencode.contains("\"baseURL\": \"http://127.0.0.1:19090/v1\""));
-        assert!(opencode.contains("\"model\": \"api-switch/auto\""));
+        assert!(opencode.contains("\"apiKey\": \"sk-test\""));
+        assert!(opencode.contains("\"auto\": {\"name\": \"auto\"}"));
 
         let codex = render_connection_content("codex", 19090, "sk-test").expect("Codex 应生成配置");
-        assert!(codex.contains("sandbox_mode = \"danger-full-access\""));
         assert!(codex.contains("model_provider = \"api_switch\""));
         assert!(codex.contains("name = \"API-Switch\""));
         assert!(codex.contains("base_url = \"http://127.0.0.1:19090/v1\""));
         assert!(codex.contains("api_key = \"sk-test\""));
-        assert!(codex.contains("wire_api = \"responses\""));
+        assert!(!codex.contains("sandbox_mode"));
+        assert!(!codex.contains("wire_api"));
 
         let claude = render_connection_content("claude-code", 19090, "sk-test").expect("Claude Code 应生成配置");
-        assert!(claude.contains("\"ANTHROPIC_BASE_URL\": \"http://127.0.0.1:19090\""));
         assert!(claude.contains("\"ANTHROPIC_AUTH_TOKEN\": \"sk-test\""));
+        assert!(claude.contains("\"ANTHROPIC_BASE_URL\": \"http://127.0.0.1:19090\""));
+        assert!(claude.contains("\"ANTHROPIC_MODEL\": \"auto\""));
 
         let workbuddy = render_connection_content("workbuddy", 19090, "sk-test").expect("Workbuddy 应生成配置");
         assert!(workbuddy.contains("\"url\": \"http://127.0.0.1:19090/v1\""));
