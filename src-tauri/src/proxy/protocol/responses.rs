@@ -1326,6 +1326,7 @@ const RESPONSES_REQUEST_EXTENSION_FIELDS: &[&str] = &[
 /// 参考：https://developers.openai.com/api/reference/resources/responses/
 /// 注意：id, object, created_at, model, output, usage, status, error, 
 /// incomplete_details, metadata 已在 responses_completed_response 中手动构造
+/// 注意：max_output_tokens, max_tool_calls 仅是请求参数，不在响应中出现
 const RESPONSES_RESPONSE_STANDARD_FIELDS: &[&str] = &[
     "instructions",
     "parallel_tool_calls",
@@ -1335,8 +1336,6 @@ const RESPONSES_RESPONSE_STANDARD_FIELDS: &[&str] = &[
     "top_p",
     "background",
     "conversation",
-    "max_output_tokens",
-    "max_tool_calls",
     "previous_response_id",
     "prompt",
     "prompt_cache_key",

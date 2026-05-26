@@ -30,6 +30,7 @@ const GEMINI_NATIVE_EXTENSION_FIELDS: &[&str] = &[
 /// Gemini（OpenAI-compatible endpoint）请求体标准字段白名单
 /// 参考：https://ai.google.dev/gemini-api/docs/openai
 /// 原则：只要输入端有，目标协议支持或可转换，就保留
+/// 注意：Gemini 不支持 logit_bias, service_tier, store（完全无对应）
 const GEMINI_REQUEST_ALLOWED_FIELDS: &[&str] = &[
     "messages",
     "temperature",
@@ -41,7 +42,6 @@ const GEMINI_REQUEST_ALLOWED_FIELDS: &[&str] = &[
     "max_completion_tokens",
     "presence_penalty",
     "frequency_penalty",
-    "logit_bias",
     "logprobs",
     "top_logprobs",
     "user",
@@ -50,9 +50,7 @@ const GEMINI_REQUEST_ALLOWED_FIELDS: &[&str] = &[
     "parallel_tool_calls",
     "response_format",
     "seed",
-    "service_tier",
     "metadata",
-    "store",
 ];
 
 /// Gemini（OpenAI-compatible endpoint）响应体标准字段白名单

@@ -56,6 +56,8 @@ const OPENAI_REQUEST_ALLOWED_FIELDS: &[&str] = &[
     "prompt_cache_key",
     "prompt_cache_retention",
     "safety_identifier",
+    "modalities",
+    "audio",
 ];
 
 /// OpenAI Chat Completions 响应体标准字段白名单（基于官方文档）
