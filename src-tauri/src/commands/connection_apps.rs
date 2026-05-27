@@ -12,6 +12,8 @@ use tokio::sync::RwLock;
 
 const CONNECTION_APPS_JSON: &str = include_str!("../../../link.json");
 const AUTO_ACCESS_KEY_NAME: &str = "AUTO";
+const MANAGED_ENV_BLOCK_PREFIX: &str = "# >>> API Switch managed:";
+const MANAGED_ENV_BLOCK_SUFFIX: &str = "# <<< API Switch managed:";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -86,27 +88,40 @@ fn execute_connection_app_with_context(
         return Err(AppError::Validation(format!("该应用暂不支持连接: {id}")));
     }
 
-    let env_configured = configure_connection_app_environment(id, &access_key, allow_file_write)?;
-    let content = render_connection_content(id, port, &access_key)?;
+    let content = render_connection_content(id, port, access_key)?;
     let file_path = app.config.file.as_deref().map(expand_home_path).transpose()?;
-    let instructions = build_instructions(app, file_path.as_ref(), &access_key, env_configured);
 
-    if should_write_file(app, allow_file_write) {
-        let target_path = file_path.ok_or_else(|| AppError::Validation("缺少目标配置文件路径".to_string()))?;
-        let backup_path = replace_config_file(&target_path, &content)?;
+    let (action, file_path_result, backup_path_result) = if should_write_file(app, allow_file_write) {
+        let target_path = file_path
+            .as_ref()
+            .ok_or_else(|| AppError::Validation("缺少目标配置文件路径".to_string()))?;
+        let backup_path = replace_config_file(target_path, &content)?;
+        (
+            "write".to_string(),
+            Some(target_path.display().to_string()),
+            backup_path.map(|path| path.display().to_string()),
+        )
+    } else {
+        ("clipboard".to_string(), file_path.as_ref().map(|path| path.display().to_string()), None)
+    };
+
+    let env_configured = configure_connection_app_environment(id, access_key, allow_file_write)?;
+    let instructions = build_instructions(app, file_path.as_ref(), access_key, env_configured);
+
+    if action == "write" {
         return Ok(AppConfigResult {
-            action: "write".to_string(),
-            file_path: Some(target_path.display().to_string()),
-            backup_path: backup_path.map(|path| path.display().to_string()),
+            action,
+            file_path: file_path_result,
+            backup_path: backup_path_result,
             content: None,
             instructions: None,
         });
     }
 
     Ok(AppConfigResult {
-        action: "clipboard".to_string(),
-        file_path: file_path.map(|path| path.display().to_string()),
-        backup_path: None,
+        action,
+        file_path: file_path_result,
+        backup_path: backup_path_result,
         content: Some(content),
         instructions: Some(instructions),
     })
@@ -264,9 +279,9 @@ fn set_user_environment_variable(_name: &str, _value: &str) -> Result<(), AppErr
 
 #[cfg(not(target_os = "windows"))]
 fn set_unix_environment_variable(name: &str, value: &str) -> Result<(), AppError> {
+    validate_environment_variable_name(name)?;
     let home = home_dir()?;
-    
-    // 尝试检测当前使用的shell
+
     let shell = std::env::var("SHELL").unwrap_or_default();
     let shell_config = if shell.contains("zsh") {
         home.join(".zshrc")
@@ -275,55 +290,96 @@ fn set_unix_environment_variable(name: &str, value: &str) -> Result<(), AppError
     } else if shell.contains("fish") {
         home.join(".config/fish/config.fish")
     } else {
-        // 默认使用.profile
         home.join(".profile")
     };
-    
-    // 检查配置文件是否存在
+
+    if let Some(parent) = shell_config.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| AppError::Internal(format!("创建shell配置目录失败: {e}")))?;
+    }
+
     let config_content = if shell_config.exists() {
         std::fs::read_to_string(&shell_config)
             .map_err(|e| AppError::Internal(format!("读取shell配置文件失败: {e}")))?
     } else {
         String::new()
     };
-    
-    // 检查是否已经设置了该环境变量
-    let export_line = if shell.contains("fish") {
-        format!("set -gx {} {}", name, value)
-    } else {
-        format!("export {}=\"{}\"", name, value)
-    };
-    
-    // 如果已经存在该环境变量的设置，先移除旧的
-    let new_content = if config_content.contains(&format!("{}=", name)) || 
-                         config_content.contains(&format!("set -gx {}", name)) {
-        // 移除旧的export语句
-        let lines: Vec<&str> = config_content.lines().collect();
-        let mut new_lines = Vec::new();
-        for line in lines {
-            if line.contains(&format!("export {}=", name)) || 
-               line.contains(&format!("set -gx {}", name)) {
-                continue;
-            }
-            new_lines.push(line);
-        }
-        new_lines.join("\n")
-    } else {
-        config_content
-    };
-    
-    // 添加新的export语句
-    let final_content = if new_content.is_empty() {
-        export_line
-    } else {
-        format!("{}\n{}", new_content, export_line)
-    };
-    
-    // 写入配置文件
-    std::fs::write(&shell_config, final_content)
+
+    let block_name = format!("{}{}", MANAGED_ENV_BLOCK_PREFIX, name);
+    let block_end = format!("{}{}", MANAGED_ENV_BLOCK_SUFFIX, name);
+    let managed_block = build_managed_env_block(&shell, name, value)?;
+    let new_content = replace_managed_block(&config_content, &block_name, &block_end, &managed_block);
+
+    std::fs::write(&shell_config, new_content)
         .map_err(|e| AppError::Internal(format!("写入shell配置文件失败: {e}")))?;
-    
+
     Ok(())
+}
+
+fn validate_environment_variable_name(name: &str) -> Result<(), AppError> {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return Err(AppError::Validation("环境变量名不能为空".to_string()));
+    };
+
+    if !(first == '_' || first.is_ascii_uppercase()) {
+        return Err(AppError::Validation("环境变量名格式不合法".to_string()));
+    }
+
+    if !chars.all(|ch| ch == '_' || ch.is_ascii_uppercase() || ch.is_ascii_digit()) {
+        return Err(AppError::Validation("环境变量名格式不合法".to_string()));
+    }
+
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn build_managed_env_block(shell: &str, name: &str, value: &str) -> Result<String, AppError> {
+    let value = escape_shell_value(value)?;
+    let start = format!("{}{}", MANAGED_ENV_BLOCK_PREFIX, name);
+    let end = format!("{}{}", MANAGED_ENV_BLOCK_SUFFIX, name);
+
+    let env_line = if shell.contains("fish") {
+        format!("set -gx {} '{}'", name, value)
+    } else {
+        format!("export {}='{}'", name, value)
+    };
+
+    Ok(format!("{start}\n{env_line}\n{end}"))
+}
+
+fn escape_shell_value(value: &str) -> Result<String, AppError> {
+    if value.contains(['\n', '\r', '\0']) {
+        return Err(AppError::Validation("环境变量值包含非法控制字符".to_string()));
+    }
+
+    Ok(value.split('\'').collect::<Vec<_>>().join("'\"'\"'"))
+}
+
+fn replace_managed_block(content: &str, start: &str, end: &str, block: &str) -> String {
+    if let Some(start_idx) = content.find(start) {
+        if let Some(end_rel_idx) = content[start_idx..].find(end) {
+            let end_idx = start_idx + end_rel_idx + end.len();
+            let after = content[end_idx..].trim_start_matches(['\r', '\n']);
+            let before = content[..start_idx].trim_end_matches(['\r', '\n']);
+            if before.is_empty() {
+                if after.is_empty() {
+                    return format!("{block}\n");
+                }
+                return format!("{block}\n\n{after}");
+            }
+            if after.is_empty() {
+                return format!("{before}\n\n{block}\n");
+            }
+            return format!("{before}\n\n{block}\n\n{after}");
+        }
+    }
+
+    if content.trim().is_empty() {
+        format!("{block}\n")
+    } else {
+        format!("{}\n\n{block}\n", content.trim_end())
+    }
 }
 
 fn build_instructions(
@@ -543,5 +599,77 @@ mod tests {
             enabled,
             created_at,
         }
+    }
+
+    #[test]
+    fn validate_environment_variable_name_accepts_valid_names() {
+        assert!(validate_environment_variable_name("API_SWITCH_API_KEY").is_ok());
+        assert!(validate_environment_variable_name("_TEST").is_ok());
+        assert!(validate_environment_variable_name("A1B2").is_ok());
+    }
+
+    #[test]
+    fn validate_environment_variable_name_rejects_invalid_names() {
+        assert!(validate_environment_variable_name("").is_err());
+        assert!(validate_environment_variable_name("lower").is_err());
+        assert!(validate_environment_variable_name("HAS-INVALID").is_err());
+        assert!(validate_environment_variable_name("HAS SPACE").is_err());
+        assert!(validate_environment_variable_name("1START").is_err());
+    }
+
+    #[test]
+    fn escape_shell_value_rejects_control_characters() {
+        assert!(escape_shell_value("ok").is_ok());
+        assert!(escape_shell_value("has\nnewline").is_err());
+        assert!(escape_shell_value("has\rcarriage").is_err());
+        assert!(escape_shell_value("has\0null").is_err());
+    }
+
+    #[test]
+    fn escape_shell_value_escapes_single_quotes() {
+        let escaped = escape_shell_value("it's").expect("应能转义单引号");
+        assert_eq!(escaped, "it'\"'\"'s");
+    }
+
+    #[test]
+    fn replace_managed_block_inserts_new_block() {
+        let result = replace_managed_block(
+            "",
+            "# >>> API Switch managed:TEST",
+            "# <<< API Switch managed:TEST",
+            "# >>> API Switch managed:TEST\nexport TEST='val'\n# <<< API Switch managed:TEST",
+        );
+        assert!(result.contains("export TEST='val'"));
+        assert!(result.starts_with("# >>> API Switch managed:TEST"));
+    }
+
+    #[test]
+    fn replace_managed_block_replaces_existing_block() {
+        let existing = "existing line\n\n# >>> API Switch managed:TEST\nexport TEST='old'\n# <<< API Switch managed:TEST\n\nother line";
+        let result = replace_managed_block(
+            existing,
+            "# >>> API Switch managed:TEST",
+            "# <<< API Switch managed:TEST",
+            "# >>> API Switch managed:TEST\nexport TEST='new'\n# <<< API Switch managed:TEST",
+        );
+        assert!(result.contains("export TEST='new'"));
+        assert!(!result.contains("export TEST='old'"));
+        assert!(result.contains("existing line"));
+        assert!(result.contains("other line"));
+    }
+
+    #[test]
+    fn replace_managed_block_preserves_surrounding_content() {
+        let existing = "line before\n\n# >>> API Switch managed:X\nold\n# <<< API Switch managed:X\n\nline after";
+        let result = replace_managed_block(
+            existing,
+            "# >>> API Switch managed:X",
+            "# <<< API Switch managed:X",
+            "# >>> API Switch managed:X\nnew\n# <<< API Switch managed:X",
+        );
+        assert!(result.starts_with("line before"));
+        assert!(result.contains("line after"));
+        assert!(result.contains("new"));
+        assert!(!result.contains("old\n# <<<"));
     }
 }
