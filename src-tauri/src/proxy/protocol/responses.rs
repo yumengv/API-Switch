@@ -395,21 +395,24 @@ pub fn responses_failed_response(
 }
 
 fn filter_responses_response_fields(obj: &mut serde_json::Map<String, Value>) {
-    const DROP_FIELDS: &[&str] = &[
-        "choices",
-        "candidates",
-        "usageMetadata",
-        "content",
-        "role",
-        "stop_reason",
-        "stop_sequence",
-        "system_fingerprint",
-        "service_tier",
+    const RESPONSES_RESPONSE_CORE_FIELDS: &[&str] = &[
+        "id",
+        "object",
+        "created_at",
+        "model",
+        "output",
+        "usage",
+        "status",
+        "error",
+        "incomplete_details",
+        "metadata",
     ];
 
-    for field in DROP_FIELDS {
-        obj.remove(*field);
-    }
+    obj.retain(|key, _| {
+        RESPONSES_RESPONSE_CORE_FIELDS.contains(&key.as_str())
+            || RESPONSES_RESPONSE_STANDARD_FIELDS.contains(&key.as_str())
+            || RESPONSES_RESPONSE_EXTENSION_FIELDS.contains(&key.as_str())
+    });
 }
 
 pub fn responses_hosted_tool_types_for_chat_fallback(tools: &[Value]) -> Vec<String> {
@@ -2400,6 +2403,53 @@ mod tests {
         assert!(response.get("stop_reason").is_none());
         assert_eq!(response["object"], "response");
         assert!(response.get("output").is_some());
+    }
+
+    #[test]
+    fn completed_response_filters_to_responses_response_whitelist() {
+        let req_body = json!({
+            "model": "gpt-4o",
+            "input": "hi",
+            "instructions": "be concise",
+            "max_output_tokens": 128,
+            "parallel_tool_calls": false,
+            "text": {"format": {"type": "text"}},
+            "temperature": 0.2,
+            "tool_choice": "auto",
+            "tools": [],
+            "top_p": 0.9,
+            "truncation": "auto",
+            "store": false,
+            "metadata": {"trace": "abc"}
+        });
+        let usage = json!({"input_tokens": 1, "output_tokens": 1, "total_tokens": 2});
+
+        let response = responses_completed_response(
+            "resp_whitelist",
+            123,
+            "completed",
+            json!(null),
+            &req_body,
+            "gpt-4o",
+            vec![responses_message_output_item("msg_1", "hi", "completed")],
+            Some("hi"),
+            usage,
+        );
+
+        assert_eq!(response["instructions"], "be concise");
+        assert_eq!(response["parallel_tool_calls"], false);
+        assert_eq!(response["temperature"], 0.2);
+        assert_eq!(response["tool_choice"], "auto");
+        assert_eq!(response["tools"], json!([]));
+        assert_eq!(response["top_p"], 0.9);
+        assert_eq!(response["truncation"], "auto");
+        assert_eq!(response["store"], false);
+        assert_eq!(response["metadata"]["trace"], "abc");
+
+        assert!(response.get("max_output_tokens").is_none());
+        assert!(response.get("output_text").is_none());
+        assert!(response.get("text").is_none());
+        assert!(response.get("reasoning").is_some());
     }
 
     #[test]
