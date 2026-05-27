@@ -31,5 +31,16 @@
       "file": "~/.claude/settings.json",
       "format": "json"
     }
+  },
+  {
+    "id": "zed",
+    "name": "Zed",
+    "description": "自动配置 Zed 连接到本地代理",
+    "icon": "ExternalLink",
+    "configMode": "write",
+    "config": {
+      "file": "~/.config/zed/settings.json",
+      "format": "json"
+    }
   }
 ]
