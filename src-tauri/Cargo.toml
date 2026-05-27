@@ -1,6 +1,6 @@
 [package]
 name = "api-switch"
-version = "0.6.101"
+version = "0.6.102"
 description = "Personal API Management & Forwarding Center"
 authors = ["you"]
 license = "MIT"
