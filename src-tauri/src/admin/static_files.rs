@@ -1,18 +1,34 @@
 use axum::http::{header, HeaderValue, StatusCode, Uri};
 use axum::response::{Html, IntoResponse, Response};
+use include_dir::{include_dir, Dir};
 
 use std::path::{Component, Path, PathBuf};
+
+static WEB_ADMIN_DIST: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../dist-web-admin");
 
 fn dist_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../dist-web-admin")
 }
 
-fn read_text(path: &Path) -> Option<String> {
-    std::fs::read_to_string(path).ok()
+fn read_embedded_text(path: &str) -> Option<String> {
+    WEB_ADMIN_DIST
+        .get_file(path)
+        .and_then(|file| file.contents_utf8())
+        .map(ToString::to_string)
 }
 
-fn read_bytes(path: &Path) -> Option<Vec<u8>> {
-    std::fs::read(path).ok()
+fn read_embedded_bytes(path: &str) -> Option<Vec<u8>> {
+    WEB_ADMIN_DIST
+        .get_file(path)
+        .map(|file| file.contents().to_vec())
+}
+
+fn read_text(path: &Path, embedded_path: &str) -> Option<String> {
+    read_embedded_text(embedded_path).or_else(|| std::fs::read_to_string(path).ok())
+}
+
+fn read_bytes(path: &Path, embedded_path: &str) -> Option<Vec<u8>> {
+    read_embedded_bytes(embedded_path).or_else(|| std::fs::read(path).ok())
 }
 
 fn content_type_for(path: &str) -> &'static str {
@@ -60,7 +76,7 @@ fn safe_dist_path(path: &str) -> Option<PathBuf> {
 pub async fn admin_index() -> impl IntoResponse {
     let dist = dist_dir();
     let index_path = dist.join("index.html");
-    let Some(mut html) = read_text(&index_path) else {
+    let Some(mut html) = read_text(&index_path, "index.html") else {
         return StatusCode::NOT_FOUND.into_response();
     };
 
@@ -112,7 +128,7 @@ pub async fn admin_asset_root(uri: Uri) -> Response {
     let Some(full_path) = safe_dist_path(&stripped) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let Some(bytes) = read_bytes(&full_path) else {
+    let Some(bytes) = read_bytes(&full_path, &stripped) else {
         return StatusCode::NOT_FOUND.into_response();
     };
 
@@ -126,4 +142,15 @@ pub async fn admin_asset_root(uri: Uri) -> Response {
         HeaderValue::from_static(cache_control_for(&stripped)),
     );
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn embedded_web_admin_index_is_available() {
+        let html = read_embedded_text("index.html").expect("Web Admin index.html 应嵌入二进制");
+        assert!(html.contains("<html") || html.contains("<!doctype html"));
+    }
 }

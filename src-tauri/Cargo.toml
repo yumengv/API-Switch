@@ -1,6 +1,6 @@
 [package]
 name = "api-switch"
-version = "0.7.0"
+version = "0.7.1"
 description = "Personal API Management & Forwarding Center"
 authors = ["you"]
 license = "MIT"
@@ -42,6 +42,7 @@ once_cell = "1.21"
 regex = "1.10"
 auto-launch = "0.5"
 url = "2.5"
+include_dir = "0.7"
 
 [profile.release]
 codegen-units = 1

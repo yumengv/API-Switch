@@ -68,7 +68,9 @@ jobs:
           pnpm remove sharp png-to-ico
 
       - name: Build
-        run: pnpm tauri build --target ${{ matrix.target }}
+        run: |
+          pnpm build:web-admin
+          pnpm tauri build --target ${{ matrix.target }}
 
       - name: Prepare artifact (rename)
         shell: bash
