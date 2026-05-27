@@ -29,11 +29,10 @@ jobs:
             target: x86_64-unknown-linux-gnu
             artifact: api-switch
             asset: api-switch-${{ github.ref_name }}-linux-x64
-          - platform: ubuntu-latest
+          - platform: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             artifact: api-switch
             asset: api-switch-${{ github.ref_name }}-linux-arm64
-            is-arm64: true
 
     runs-on: ${{ matrix.platform }}
 
@@ -56,40 +55,11 @@ jobs:
         with:
           workspaces: src-tauri -> target
 
-      - name: Linux x64 dependencies
-        if: matrix.platform == 'ubuntu-latest' && matrix.target == 'x86_64-unknown-linux-gnu'
+      - name: Linux dependencies
+        if: startsWith(matrix.platform, 'ubuntu')
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-
-      - name: Linux ARM64 dependencies
-        if: matrix.is-arm64
-        run: |
-          # Add arm64 architecture
-          sudo dpkg --add-architecture arm64
-          
-          # Remove all existing source files to prevent arm64 fetching from wrong mirrors
-          sudo rm -rf /etc/apt/sources.list.d/*
-          
-          # Write clean sources.list with architecture pinning using printf
-          # amd64 from standard mirrors, arm64 from ports.ubuntu.com
-          printf '%s\n' \
-            "deb [arch=amd64] http://archive.ubuntu.com/ubuntu noble main restricted universe multiverse" \
-            "deb [arch=amd64] http://archive.ubuntu.com/ubuntu noble-updates main restricted universe multiverse" \
-            "deb [arch=amd64] http://archive.ubuntu.com/ubuntu noble-backports main restricted universe multiverse" \
-            "deb [arch=amd64] http://security.ubuntu.com/ubuntu noble-security main restricted universe multiverse" \
-            "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main restricted universe multiverse" \
-            "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe multiverse" \
-            "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-security main restricted universe multiverse" \
-            | sudo tee /etc/apt/sources.list
-          
-          sudo apt-get clean
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-          sudo apt-get install -y libwebkit2gtk-4.1-dev:arm64 libappindicator3-dev:arm64 librsvg2-dev:arm64 patchelf
-          
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-          echo "PKG_CONFIG_SYSROOT_DIR=/usr/aarch64-linux-gnu" >> $GITHUB_ENV
 
       - name: Install pnpm and dependencies
         run: |
