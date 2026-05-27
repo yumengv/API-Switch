@@ -1542,7 +1542,10 @@ fn stream_chunk_has_model_info_delta(value: &Value, model: &str) -> bool {
                 .get("delta")
                 .and_then(|delta| delta.get("content"))
                 .and_then(Value::as_str)
-                .is_some_and(|content| content.trim() == format!("model: {model}"))
+                .is_some_and(|content| {
+                    let trimmed = content.trim();
+                    trimmed == format!("model: {model}") || trimmed == format!("模型: {model}")
+                })
         })
 }
 
