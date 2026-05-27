@@ -1,22 +1,18 @@
+use crate::data_dir;
 use crate::AppError;
 use chrono::Local;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Run the backup and cleanup process
 pub fn run_backup() {
-    let exe_dir = match std::env::current_exe() {
-        Ok(exe_path) => exe_path
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| PathBuf::from(".")),
+    let db_path = match data_dir::database_path() {
+        Ok(path) => path,
         Err(e) => {
-            log::error!("Backup failed: Failed to get exe path: {e}");
+            log::error!("Backup failed: Failed to resolve database path: {e}");
             return;
         }
     };
-
-    let db_path = exe_dir.join("api-switch.db");
     if !db_path.exists() {
         return;
     }
@@ -25,7 +21,12 @@ pub fn run_backup() {
         log::error!("Database backup failed: {e}");
     }
 
-    let backups_dir = exe_dir.join("backups");
+    let Some(data_dir) = db_path.parent() else {
+        log::error!("Backup cleanup failed: Failed to get database parent directory");
+        return;
+    };
+
+    let backups_dir = data_dir.join("backups");
     if let Err(e) = cleanup_old_backups(&backups_dir, 7) {
         log::error!("Backup cleanup failed: {e}");
     }
