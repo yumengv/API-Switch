@@ -29,7 +29,7 @@ jobs:
             target: x86_64-unknown-linux-gnu
             artifact: api-switch
             asset: api-switch-${{ github.ref_name }}-linux-x64
-          - platform: ubuntu-22.04
+          - platform: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             artifact: api-switch
             asset: api-switch-${{ github.ref_name }}-linux-arm64
@@ -69,15 +69,15 @@ jobs:
           sudo dpkg --add-architecture arm64
           
           # Completely rewrite sources.list with proper architecture pinning
-          # amd64 from archive.ubuntu.com, arm64 from ports.ubuntu.com
+          # Ubuntu 24.04 (noble): amd64 from archive.ubuntu.com, arm64 from ports.ubuntu.com
           sudo tee /etc/apt/sources.list > /dev/null << 'EOF'
-          deb [arch=amd64] http://archive.ubuntu.com/ubuntu jammy main restricted universe multiverse
-          deb [arch=amd64] http://archive.ubuntu.com/ubuntu jammy-updates main restricted universe multiverse
-          deb [arch=amd64] http://archive.ubuntu.com/ubuntu jammy-backports main restricted universe multiverse
-          deb [arch=amd64] http://security.ubuntu.com/ubuntu jammy-security main restricted universe multiverse
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse
+          deb [arch=amd64] http://archive.ubuntu.com/ubuntu noble main restricted universe multiverse
+          deb [arch=amd64] http://archive.ubuntu.com/ubuntu noble-updates main restricted universe multiverse
+          deb [arch=amd64] http://archive.ubuntu.com/ubuntu noble-backports main restricted universe multiverse
+          deb [arch=amd64] http://security.ubuntu.com/ubuntu noble-security main restricted universe multiverse
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main restricted universe multiverse
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe multiverse
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-security main restricted universe multiverse
           EOF
           
           sudo apt-get update
