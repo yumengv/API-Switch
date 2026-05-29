@@ -47,6 +47,10 @@ const AZURE_REQUEST_FOREIGN_DROP: &[&str] = &[
     "system",
     "max_tokens_to_sample",
     "top_k",
+    "thinking",
+    "context_management",
+    "mcp_servers",
+    "container",
     // Gemini native 专有
     "contents",
     "generationConfig",

@@ -51,6 +51,10 @@ const OPENAI_FOREIGN_DROP: &[&str] = &[
     "system",
     "max_tokens_to_sample",
     "top_k",
+    "thinking",
+    "context_management",
+    "mcp_servers",
+    "container",
     // Gemini native 专有
     "contents",
     "generationConfig",
@@ -227,7 +231,9 @@ mod tests {
 
         assert_eq!(body["model"], "resolved-model");
         assert_eq!(body["reasoning_effort"], "high");
-        assert_eq!(body["thinking"]["type"], "enabled");
+        // 规则：顶层 thinking 是 Anthropic 原名，非 OpenAI 标准/扩展/语义对应字段，
+        // 出口应抛弃（保留的是 reasoning_effort/reasoning_content/provider_specific）。
+        assert!(body.get("thinking").is_none());
         assert_eq!(body["messages"][0]["reasoning_content"], "kept reasoning");
         assert_eq!(
             body["messages"][0]["provider_specific"]["thinking"],
@@ -282,7 +288,8 @@ mod tests {
         assert_eq!(body["prompt_cache_key"], "cache-key");
         assert_eq!(body["safety_identifier"], "safe-user");
         assert_eq!(body["reasoning_effort"], "medium");
-        assert_eq!(body["thinking"]["type"], "enabled");
+        // 顶层 thinking（Anthropic 原名）出口抛弃；reasoning_effort 保留
+        assert!(body.get("thinking").is_none());
     }
 
     /// 黑名单决策：未知/未来字段必须穿透（不再被白名单误删）。

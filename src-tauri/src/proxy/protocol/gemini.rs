@@ -62,6 +62,11 @@ const GEMINI_FOREIGN_DROP: &[&str] = &[
     "betas",
     "system",
     "max_tokens_to_sample",
+    "top_k",
+    "thinking",
+    "context_management",
+    "mcp_servers",
+    "container",
     // 内部暂存字段
     "__as_raw_claude_req",
     "__as_raw_responses_req",

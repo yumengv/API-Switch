@@ -1088,9 +1088,7 @@ pub fn claude_to_openai_request(claude: &Value) -> Value {
     });
 
     // Pass through common fields
-    // 注意：top_k 是 Anthropic/Gemini 参数，OpenAI Chat Completions 不支持，
-    // 不能带进 OpenAI 中间态（会被 litellm 等上游拒）。
-    for field in &["stream", "temperature", "top_p"] {
+    for field in &["stream", "temperature", "top_p", "top_k"] {
         if let Some(val) = claude.get(*field) {
             openai[*field] = val.clone();
         }
@@ -1175,30 +1173,15 @@ pub fn claude_to_openai_request(claude: &Value) -> Value {
     }
 
     // 公理二：未知字段穿透。上面手动处理了所有已知字段，
-    // 这里把 claude 顶层剩余的（未知/未来的）字段也带过去，
-    // 避免"中转翻译器"丢信息。
+    // 这里把 claude 顶层剩余的（未知/未来的）字段也带过去，避免"中转翻译器"丢信息。
     //
-    // 但 Claude 专有字段（OpenAI/兼容上游不认，如 litellm 会对 thinking/
-    // context_management 报 UnsupportedParamsError）必须在进 OpenAI 中间态时剔除，
-    // 否则跨协议（Claude→OpenAI）转发会 400。这些字段要么已在上面映射过
-    // （system/thinking/metadata/stop_sequences），要么 OpenAI 无对应。
-    const CLAUDE_ONLY_DROP: &[&str] = &[
-        "system",            // 已转成 messages 里的 system
-        "thinking",          // 已按需映射；OpenAI 不认
-        "context_management",
-        "mcp_servers",
-        "anthropic_version",
-        "anthropic_beta",
-        "betas",
-        "container",
-        "metadata",          // 已映射为 user
-        "stop_sequences",    // 已映射为 stop
-        "top_k",             // OpenAI Chat 不支持
-    ];
+    // 规则：入口（A→OpenAI 中间协议）不做过滤，不能转换的一律穿透；
+    // 非本协议字段的过滤抛弃在【出口】（中间→目标协议 B）进行，
+    // 见各协议 transform_request 的 *_FOREIGN_DROP 黑名单。
     if ENABLE_UNKNOWN_FIELD_PASSTHROUGH {
         if let (Some(src), Some(dst)) = (claude.as_object(), openai.as_object_mut()) {
             for (key, value) in src {
-                if !dst.contains_key(key) && !CLAUDE_ONLY_DROP.contains(&key.as_str()) {
+                if !dst.contains_key(key) {
                     dst.insert(key.clone(), value.clone());
                 }
             }
@@ -2924,40 +2907,26 @@ mod tests {
         assert!(body.get("max_tool_calls").is_none());
     }
 
-    /// 回归：Claude→OpenAI 中间态必须剔除 Claude 专有字段（thinking/system/
-    /// context_management 等），否则跨协议转发到 OpenAI/兼容上游会 400
-    /// （litellm UnsupportedParamsError）。
+    /// 规则验证：Claude→OpenAI【入口】不过滤，不能转换的字段一律穿透到中间态；
+    /// 非本协议字段的剔除在【出口】各协议 transform_request 完成。
     #[test]
-    fn claude_to_openai_drops_claude_only_fields() {
+    fn claude_to_openai_passes_through_unconvertible_fields() {
         let claude = json!({
             "model": "claude-opus-4-8",
             "max_tokens": 100,
-            "system": "you are terse",
             "thinking": {"type": "enabled", "budget_tokens": 4096},
             "context_management": {"edits": []},
             "mcp_servers": [{"name": "x"}],
-            "anthropic_version": "2023-06-01",
-            "stop_sequences": ["STOP"],
-            "top_k": 40,
             "messages": [{"role": "user", "content": "hi"}],
             "x_future_field": "keep_me"
         });
 
         let openai = claude_to_openai_request(&claude);
 
-        // Claude 专有字段不得泄漏到 OpenAI 中间态
-        assert!(openai.get("thinking").is_none(), "thinking 不应泄漏");
-        assert!(openai.get("context_management").is_none());
-        assert!(openai.get("mcp_servers").is_none());
-        assert!(openai.get("anthropic_version").is_none());
-        assert!(openai.get("top_k").is_none());
-        // system 应转成 messages 里的 system，而非顶层裸字段
-        assert!(openai.get("system").is_none());
-        assert_eq!(openai["messages"][0]["role"], "system");
-        // stop_sequences 已映射为 stop
-        assert!(openai.get("stop_sequences").is_none());
-        assert_eq!(openai["stop"][0], "STOP");
-        // 未知/未来字段仍穿透
+        // 入口穿透：不能转换的 Claude 字段保留在中间态（由出口黑名单负责剔除）
+        assert!(openai.get("thinking").is_some(), "入口应穿透 thinking");
+        assert!(openai.get("context_management").is_some());
+        assert!(openai.get("mcp_servers").is_some());
         assert_eq!(openai["x_future_field"], "keep_me");
     }
 
