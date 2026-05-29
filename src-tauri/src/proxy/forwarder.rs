@@ -780,8 +780,12 @@ async fn forward_single(
     if is_stream {
         let needs_transform =
             !is_responses_passthrough && !is_claude_passthrough && adapter.needs_sse_transform();
-        let append_model_info = if is_claude_passthrough {
+        // Claude 直通也要显示实际命中的模型名（AUTO 场景刚需）；用 Anthropic 原生
+        // 注入，不影响转发。Responses 直通仍不注入（会污染 output_text）。
+        let append_model_info = if is_responses_passthrough {
             false
+        } else if is_claude_passthrough {
+            should_append_model_info(state, body, caller_kind)
         } else {
             should_append_model_info(state, body, caller_kind)
         };
@@ -798,6 +802,7 @@ async fn forward_single(
             request_start,
             prior_attempts,
             append_model_info,
+            is_claude_passthrough,
             middleware,
             &ctx,
         );
@@ -1048,6 +1053,7 @@ fn build_streaming_response(
     request_start: std::time::Instant,
     prior_attempts: Vec<AttemptInfo>,
     append_model_info: bool,
+    is_claude_passthrough: bool,
     middleware: &[Arc<dyn super::middleware::ForwarderMiddleware>],
     ctx: &RequestContext,
 ) -> axum::response::Response {
@@ -1270,6 +1276,43 @@ log_usage(
                             cx.waker().wake_by_ref();
                             return Poll::Pending;
                         }
+                    } else if is_claude_passthrough {
+                        // Claude 原生直通流：扫描事件，在 message_stop 前注入一次
+                        // 模型名（Anthropic 格式）。有工具调用则跳过，防 CALL 循环刷屏。
+                        let saw_stop = scan_anthropic_passthrough_chunk(
+                            &chunk,
+                            &has_text_delta,
+                            &has_tool_calls,
+                        );
+                        let should_inject = append_model_info
+                            && saw_stop
+                            && has_text_delta.load(Ordering::Relaxed)
+                            && !has_tool_calls.load(Ordering::Relaxed)
+                            && !done_state.appended_model_info;
+                        let chunk = normalize_reasoning_in_sse_chunk(&chunk).unwrap_or(chunk);
+                        if should_inject {
+                            done_state.appended_model_info = true;
+                            // 在 message_stop 事件之前插入模型名 block
+                            let marker = b"event: message_stop";
+                            if let Some(pos) = chunk
+                                .windows(marker.len())
+                                .position(|w| w == marker)
+                            {
+                                let mut out = Vec::with_capacity(chunk.len() + 256);
+                                out.extend_from_slice(&chunk[..pos]);
+                                out.extend_from_slice(&anthropic_model_info_events(
+                                    entry.model.as_str(),
+                                ));
+                                out.extend_from_slice(&chunk[pos..]);
+                                return Poll::Ready(Some(Ok(Bytes::from(out))));
+                            }
+                            // 没找到 message_stop 文本边界：注入放到 chunk 前
+                            let mut out =
+                                anthropic_model_info_events(entry.model.as_str());
+                            out.extend_from_slice(&chunk);
+                            return Poll::Ready(Some(Ok(Bytes::from(out))));
+                        }
+                        return Poll::Ready(Some(Ok(chunk)));
                     } else {
                         if let Some(with_model_info) = append_and_parse_sse(
                             &mut sse_buffer,
@@ -1717,6 +1760,72 @@ fn model_info_delta(model: &str) -> Vec<u8> {
         }]
     });
     format!("data: {payload}\n\n").into_bytes()
+}
+
+/// 为 Claude 同协议直通流生成"模型名"注入事件（Anthropic 原生 SSE 格式）。
+///
+/// AUTO 路由下用户需要知道实际命中的模型。直通流是 Anthropic 原生格式，
+/// OpenAI 的 `model_info_delta` 不兼容，故用 content_block 三件套
+/// （start→delta→stop）追加一段 `\n\nmodel: xxx` 文本，客户端按正文显示。
+/// 使用一个高 index（99）独立 block，避免与上游 content block 冲突。
+fn anthropic_model_info_events(model: &str) -> Vec<u8> {
+    let idx = 99;
+    let start = serde_json::json!({
+        "type": "content_block_start",
+        "index": idx,
+        "content_block": {"type": "text", "text": ""}
+    });
+    let delta = serde_json::json!({
+        "type": "content_block_delta",
+        "index": idx,
+        "delta": {"type": "text_delta", "text": format!("\n\nmodel: {model}")}
+    });
+    let stop = serde_json::json!({"type": "content_block_stop", "index": idx});
+    format!(
+        "event: content_block_start\ndata: {start}\n\nevent: content_block_delta\ndata: {delta}\n\nevent: content_block_stop\ndata: {stop}\n\n"
+    )
+    .into_bytes()
+}
+
+/// 直通流字节里查找 Anthropic 事件，判断是否含工具调用 / 已含文本 / 到达 message_stop。
+/// 仅用于决定"是否在 message_stop 前注入模型名"，不解析全部内容。
+fn scan_anthropic_passthrough_chunk(
+    chunk: &Bytes,
+    has_text: &Arc<AtomicBool>,
+    has_tool: &Arc<AtomicBool>,
+) -> bool {
+    let text = String::from_utf8_lossy(chunk);
+    let mut saw_message_stop = false;
+    for line in text.lines() {
+        let Some(payload) = line.strip_prefix("data: ") else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_str::<Value>(payload) else {
+            continue;
+        };
+        match value.get("type").and_then(Value::as_str) {
+            Some("content_block_start") => {
+                if value
+                    .get("content_block")
+                    .and_then(|b| b.get("type"))
+                    .and_then(Value::as_str)
+                    == Some("tool_use")
+                {
+                    has_tool.store(true, Ordering::Relaxed);
+                }
+            }
+            Some("content_block_delta") => {
+                if let Some(dt) = value.get("delta").and_then(|d| d.get("type")).and_then(Value::as_str) {
+                    if dt == "text_delta" {
+                        has_text.store(true, Ordering::Relaxed);
+                    }
+                }
+            }
+            Some("message_stop") => saw_message_stop = true,
+            _ => {}
+        }
+    }
+    saw_message_stop
 }
 
 fn transform_sse_chunk(
@@ -2257,6 +2366,53 @@ fn log_usage(
 mod tests {
     use super::*;
     use crate::proxy::protocol::get_adapter;
+
+    /// Claude 直通的模型名注入：生成的应是合法 Anthropic content_block 事件，
+    /// 含 `model: xxx` 文本。
+    #[test]
+    fn anthropic_model_info_events_are_valid() {
+        let bytes = anthropic_model_info_events("claude-opus-4-8");
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(text.contains("event: content_block_start"));
+        assert!(text.contains("event: content_block_delta"));
+        assert!(text.contains("event: content_block_stop"));
+        assert!(text.contains("model: claude-opus-4-8"));
+        // 每个 data: 行都应是合法 JSON
+        for line in text.lines() {
+            if let Some(p) = line.strip_prefix("data: ") {
+                serde_json::from_str::<Value>(p).expect("data 行应为合法 JSON");
+            }
+        }
+    }
+
+    /// 扫描函数应正确识别 text_delta(有文本)、tool_use(工具调用)、message_stop。
+    #[test]
+    fn scan_anthropic_passthrough_detects_signals() {
+        let has_text = Arc::new(AtomicBool::new(false));
+        let has_tool = Arc::new(AtomicBool::new(false));
+
+        let text_chunk = Bytes::from_static(
+            b"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n",
+        );
+        let stop = scan_anthropic_passthrough_chunk(&text_chunk, &has_text, &has_tool);
+        assert!(!stop);
+        assert!(has_text.load(Ordering::Relaxed));
+        assert!(!has_tool.load(Ordering::Relaxed));
+
+        let tool_chunk = Bytes::from_static(
+            b"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"t\",\"name\":\"x\"}}\n\n",
+        );
+        scan_anthropic_passthrough_chunk(&tool_chunk, &has_text, &has_tool);
+        assert!(has_tool.load(Ordering::Relaxed), "应检测到 tool_use");
+
+        let stop_chunk = Bytes::from_static(
+            b"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+        );
+        assert!(
+            scan_anthropic_passthrough_chunk(&stop_chunk, &has_text, &has_tool),
+            "应检测到 message_stop"
+        );
+    }
 
     #[test]
     fn transformed_sse_chunks_are_standard_sse_frames() {
