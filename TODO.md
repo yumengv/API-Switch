@@ -6,6 +6,20 @@
 
 ## P0
 
+### 🔄 mid-conversation system 故障修复（Claude 中转中断）
+
+**来源：** 2026-05-28 Claude Opus 4.8 发布、2026-05-29 Claude Code v2.1.154 启用 **mid-conversation system messages**（`role:"system"` 置于 `messages` 数组中间，紧跟 user turn）。中间层 `transform_request_to_anthropic`（`claude.rs:135-154`）把**所有** system 角色无差别抽进顶层 `system`，摧毁其位置语义，导致 **Claude→Claude 与 Claude→OpenAI 中转不可用**。
+
+**状态：** 分析与方案完成，**待审核**（详见 `docs/protocol-passthrough-fix-plan.md`，已过两轮多角度自审）。实现拟在 Codex。
+
+**对症方案：**
+- **P0-A 同协议直通**（Claude→Claude）：仿 Responses 的 `__as_raw_responses_req` + `RESPONSES_PASSTHROUGH_HEADER`，原始体直送上游，由 Opus 4.8 自行处理 mid-system。必须同时处理：响应方向跨两层（`forward_single:765` + `handle_messages:385`）、直通后 `apply_disable_reasoning`/`StreamOptionsMiddleware` 的 OpenAI 结构假定、暂存字段转发前剥离。
+- **P0-C mid-system 角色映射**（Claude→OpenAI）：区分"开场 system"与"对话中 system"，后者保留数组位置；不写模型名分支（见 [[feedback_no_model_specific_fixes]]）。
+- 储备（本病因无效，留作 §3.1 类问题）：P0-B 顶层黑名单 / P0-0 关 `ENABLE_UNKNOWN_FIELD_PASSTHROUGH`。
+- 根治：P1 来源分桶（对齐 `docs/PROTOCOL_ENVELOPE_DESIGN.md`）。
+
+**关联：** `docs/protocol-passthrough-fix-plan.md`、`src-tauri/src/proxy/protocol/claude.rs`、`forwarder.rs`、`handlers.rs`、`responses_handler.rs`（范本）。**与本节 P1「消息角色兼容性」高度重叠，建议合并为一处 messages 角色归一化逻辑。**
+
 ### ⏳ 依赖膨胀分析落地
 
 **来源：** `docs/dependency_analysis.md` 分析显示，在 Termux 上运行 `api-switch` 时，需搬运 ~678 个 `.so`（约 708MB）的 GUI 依赖库（GTK、WebKit2GTK、ICU 等）。即使只用 headless 模式，这些库也会因 ELF NEEDED 被强制载入。
@@ -71,6 +85,8 @@
 ## P1
 
 ### ⏳ 消息角色兼容性
+
+> **关联：** 与 P0「mid-conversation system 故障修复」的 P0-C 同属 messages 角色归一化，建议合并实现（见 `docs/protocol-passthrough-fix-plan.md` §9 开放项 4）。
 
 **来源：** 部分上游拒绝 `messages[]` 中非常规 role 的消息，返回 400 error。
 
