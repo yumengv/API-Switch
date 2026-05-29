@@ -901,9 +901,11 @@ fn extract_usage_tokens(body: &Value) -> (i64, i64, i64) {
         .or_else(|| body.pointer("/message/usage"));
     let prompt_tokens = usage
         .and_then(|v| v.get("prompt_tokens"))
-        .or_else(|| usage.and_then(|v| v.get("input_tokens")))
         .and_then(Value::as_i64)
-        .unwrap_or(0);
+        .unwrap_or_else(|| {
+            // Anthropic：input_tokens + 缓存 token（高缓存命中时 input_tokens 可能为 0）
+            anthropic_prompt_tokens(usage)
+        });
     let completion_tokens = usage
         .and_then(|v| v.get("completion_tokens"))
         .or_else(|| usage.and_then(|v| v.get("output_tokens")))
@@ -1792,6 +1794,14 @@ fn anthropic_model_info_events(model: &str) -> Vec<u8> {
     .into_bytes()
 }
 
+/// Anthropic 的 prompt 规模 = input_tokens + cache_read + cache_creation。
+/// 高缓存命中时 input_tokens 可能为 0，必须把缓存 token 计入，否则 IN TOKEN 显示 0。
+fn anthropic_prompt_tokens(usage: Option<&Value>) -> i64 {
+    let Some(u) = usage else { return 0 };
+    let get = |k: &str| u.get(k).and_then(Value::as_i64).unwrap_or(0);
+    get("input_tokens") + get("cache_read_input_tokens") + get("cache_creation_input_tokens")
+}
+
 /// 直通流字节里查找 Anthropic 事件：判断是否含工具调用 / 已含文本 / 到达
 /// message_stop，并提取 usage token（Anthropic 把 input_tokens 放在
 /// message_start 的 /message/usage，output_tokens 放在 message_delta 顶层 usage）。
@@ -1813,17 +1823,16 @@ fn scan_anthropic_passthrough_chunk(
         };
         match value.get("type").and_then(Value::as_str) {
             Some("message_start") => {
-                // input_tokens 在 message.usage 里
-                if let Some(p) = value
-                    .pointer("/message/usage/input_tokens")
-                    .and_then(Value::as_i64)
-                {
-                    if p > 0 {
-                        prompt_tokens.store(p, Ordering::Relaxed);
-                    }
+                // Anthropic 的 prompt 成本分散在 input_tokens + 缓存 token。
+                // 高缓存命中时 input_tokens 可能为 0，但 cache_read/creation 很大，
+                // 真实 prompt 规模 = 三者之和（否则 IN TOKEN 显示 0，误导）。
+                let u = value.pointer("/message/usage");
+                let prompt = anthropic_prompt_tokens(u);
+                if prompt > 0 {
+                    prompt_tokens.store(prompt, Ordering::Relaxed);
                 }
-                if let Some(c) = value
-                    .pointer("/message/usage/output_tokens")
+                if let Some(c) = u
+                    .and_then(|v| v.get("output_tokens"))
                     .and_then(Value::as_i64)
                 {
                     if c > 0 {
@@ -1857,6 +1866,11 @@ fn scan_anthropic_passthrough_chunk(
                     if c > 0 {
                         completion_tokens.store(c, Ordering::Relaxed);
                     }
+                }
+                // prompt（含缓存 token）兜底：部分中转在 message_delta 才给全
+                let prompt = anthropic_prompt_tokens(value.get("usage"));
+                if prompt > 0 {
+                    prompt_tokens.store(prompt, Ordering::Relaxed);
                 }
             }
             Some("message_stop") => saw_message_stop = true,
@@ -2438,6 +2452,18 @@ mod tests {
         );
         scan_anthropic_passthrough_chunk(&start_chunk, &has_text, &has_tool, &pt, &ct);
         assert_eq!(pt.load(Ordering::Relaxed), 123, "应从 message_start 取 input_tokens");
+
+        // 高缓存命中：input_tokens=0 但 cache token 很大，prompt 应计入缓存
+        let pt2 = Arc::new(AtomicI64::new(0));
+        let cache_chunk = Bytes::from_static(
+            b"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":0,\"output_tokens\":1,\"cache_creation_input_tokens\":490,\"cache_read_input_tokens\":429758}}}\n\n",
+        );
+        scan_anthropic_passthrough_chunk(&cache_chunk, &has_text, &has_tool, &pt2, &ct);
+        assert_eq!(
+            pt2.load(Ordering::Relaxed),
+            430248,
+            "高缓存命中时 prompt 应 = input + cache_read + cache_creation"
+        );
 
         let text_chunk = Bytes::from_static(
             b"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n",
