@@ -25,101 +25,83 @@ const GEMINI_NATIVE_EXTENSION_FIELDS: &[&str] = &[
     "cachedContent",
 ];
 
-// ─── 白名单常量：Gemini 请求/响应/扩展字段 ───────────────────────
+// ─── 黑名单常量 + 构建器：见下方 GEMINI_FOREIGN_DROP ──────────────
 
-/// Gemini（OpenAI-compatible endpoint）请求体标准字段白名单
-/// 参考：https://ai.google.dev/gemini-api/docs/openai
-/// 原则：只要输入端有，目标协议支持或可转换，就保留
-/// 注意：Gemini 不支持 logit_bias, service_tier, store（完全无对应）
-const GEMINI_REQUEST_ALLOWED_FIELDS: &[&str] = &[
-    "messages",
-    "temperature",
-    "top_p",
-    "n",
-    "stream",
-    "stop",
-    "max_tokens",
-    "max_completion_tokens",
-    "presence_penalty",
-    "frequency_penalty",
-    "logprobs",
-    "top_logprobs",
-    "user",
-    "tools",
-    "tool_choice",
-    "parallel_tool_calls",
-    "response_format",
-    "seed",
-    "metadata",
-];
 
-/// Gemini（OpenAI-compatible endpoint）响应体标准字段白名单
-/// 参考：https://ai.google.dev/gemini-api/docs/openai
-/// 原则：标准字段全部保留
-const GEMINI_RESPONSE_ALLOWED_FIELDS: &[&str] = &[
-    "id",
-    "object",
-    "created",
-    "model",
-    "choices",
-    "usage",
-    "system_fingerprint",
+// ─── 黑名单常量 + 构建器 ───────────────────────────────────────
+
+/// Gemini（OpenAI-compatible endpoint）出口要剔除的字段。
+///
+/// 黑名单决策（见 docs/protocol-passthrough-fix-plan.md §3.4）：保留未知/未来
+/// 字段，仅丢弃 (a) Gemini 兼容端点明确不支持的 OpenAI 字段，(b) 外来协议
+/// （Anthropic / OpenAI Responses）专有字段。参考：https://ai.google.dev/gemini-api/docs/openai
+const GEMINI_FOREIGN_DROP: &[&str] = &[
+    // Gemini 兼容端点不支持的 OpenAI 字段
+    "logit_bias",
     "service_tier",
-    "metadata",
+    "store",
+    "prompt_cache_key",
+    "prompt_cache_retention",
+    "safety_identifier",
+    "modalities",
+    "audio",
+    "prediction",
+    // OpenAI Responses API 专有
+    "input",
+    "instructions",
+    "include",
+    "prompt",
+    "max_output_tokens",
+    "text",
+    "truncation",
+    "previous_response_id",
+    "max_tool_calls",
+    // Anthropic 专有
+    "anthropic_version",
+    "anthropic_beta",
+    "betas",
+    "system",
+    "max_tokens_to_sample",
+    // 内部暂存字段
+    "__as_raw_claude_req",
+    "__as_raw_responses_req",
+    "__as_raw_gemini_req",
 ];
 
-/// Gemini 扩展字段白名单
-const GEMINI_EXTENSION_FIELDS: &[&str] = &[
-    "reasoning_effort",
-    "thinking",
-    "reasoning_content",
-    "reasoning_text",
-    "reasoning_details",
-    "provider_specific",
-    "extra_body",
+/// Gemini 响应方向要剔除的外来协议专有字段
+const GEMINI_RESPONSE_FOREIGN_DROP: &[&str] = &[
+    "output",
+    "output_text",
+    "instructions",
+    "candidates",
+    "usageMetadata",
+    "promptFeedback",
+    "stop_reason",
+    "stop_sequence",
+    "__as_raw_claude_req",
+    "__as_raw_responses_req",
+    "__as_raw_gemini_req",
 ];
 
-// ─── 白名单构建器函数 ───────────────────────────────────────────
-
-/// 从中间协议构建 Gemini 请求输出对象（只保留白名单字段）
+/// 从中间协议构建 Gemini 请求输出对象（黑名单：保留全部，仅剔除外来/不支持字段）
 fn build_gemini_request_output(
     src: &serde_json::Map<String, Value>,
     actual_model: &str,
 ) -> Value {
-    let mut out = serde_json::Map::new();
+    let mut out = src.clone();
+    for key in GEMINI_FOREIGN_DROP {
+        out.remove(*key);
+    }
     out.insert("model".to_string(), Value::String(actual_model.to_string()));
-
-    for key in GEMINI_REQUEST_ALLOWED_FIELDS {
-        if let Some(value) = src.get(*key) {
-            out.insert((*key).to_string(), value.clone());
-        }
-    }
-
-    for key in GEMINI_EXTENSION_FIELDS {
-        if let Some(value) = src.get(*key) {
-            out.insert((*key).to_string(), value.clone());
-        }
-    }
-
     Value::Object(out)
 }
 
-/// 从中间协议构建 Gemini 响应输出对象（只保留白名单字段）
+/// 从中间协议构建 Gemini 响应输出对象（黑名单：保留全部，仅剔除外来字段）
 fn build_gemini_response_output(src: &serde_json::Map<String, Value>) -> Value {
-    let mut out = serde_json::Map::new();
-
-    for key in GEMINI_RESPONSE_ALLOWED_FIELDS {
-        if let Some(value) = src.get(*key) {
-            out.insert((*key).to_string(), value.clone());
-        }
+    let mut out = src.clone();
+    for key in GEMINI_RESPONSE_FOREIGN_DROP {
+        out.remove(*key);
     }
-
-    for key in GEMINI_EXTENSION_FIELDS {
-        if let Some(value) = src.get(*key) {
-            out.insert((*key).to_string(), value.clone());
-        }
-    }
-
     Value::Object(out)
 }
 
@@ -1352,9 +1334,36 @@ mod tests {
         assert!(gemini.get("max_tool_calls").is_none());
     }
 
+    /// 黑名单决策：GeminiAdapter（兼容端点 builder）应穿透未知/未来字段，
+    /// 仅剔除 Gemini 不支持的 OpenAI 字段与外来协议字段。
     #[test]
-    fn openai_to_gemini_response_drops_foreign_fields() {
-        let openai = json!({
+    fn gemini_builder_passes_through_unknown_drops_unsupported() {
+        let adapter = GeminiAdapter;
+        let mut body = json!({
+            "model": "auto",
+            "messages": [{"role": "user", "content": "hi"}],
+            "temperature": 0.5,
+            "x_future_gemini_field": {"nested": "value"},
+            "logit_bias": {"1": 1},
+            "service_tier": "auto",
+            "anthropic_version": "2023-06-01"
+        });
+
+        adapter.transform_request(&mut body, "gemini-pro");
+
+        assert_eq!(body["model"], "gemini-pro");
+        assert_eq!(body["temperature"], 0.5);
+        // 未知字段穿透
+        assert_eq!(body["x_future_gemini_field"]["nested"], "value");
+        // Gemini 不支持的 OpenAI 字段被剔除
+        assert!(body.get("logit_bias").is_none());
+        assert!(body.get("service_tier").is_none());
+        // 外来协议字段被剔除
+        assert!(body.get("anthropic_version").is_none());
+    }
+
+    #[test]
+    fn openai_to_gemini_response_drops_foreign_fields() {        let openai = json!({
             "id": "chatcmpl_1",
             "object": "chat.completion",
             "created": 123,
