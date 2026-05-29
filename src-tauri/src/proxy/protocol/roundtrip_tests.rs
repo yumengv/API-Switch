@@ -227,6 +227,46 @@ mod claude_roundtrip {
         );
     }
 
+    /// mid-conversation system（Opus 4.8 + Claude Code v2.1.154）：
+    /// messages 数组中间的 `role:"system"` 在 Claude→OpenAI 方向必须**保留在原位**
+    /// （作为 OpenAI system 消息），不被抽到顶层 system。
+    /// 注：Claude→Claude 方向由 forwarder 的同协议直通（is_claude_passthrough）原样
+    /// 转发处理，不经此函数——见 forwarder.rs 与 docs/protocol-passthrough-fix-plan.md。
+    #[test]
+    fn request_mid_conversation_system_preserved_to_openai() {
+        let claude = json!({
+            "model": TEST_MODEL,
+            "max_tokens": 64,
+            "messages": [
+                {"role": "user", "content": "write code"},
+                {"role": "assistant", "content": "ok"},
+                {"role": "system", "content": "NEW RULE: from here, extra permissions"},
+                {"role": "user", "content": "continue"}
+            ]
+        });
+
+        let openai = claude_to_openai_request(&claude);
+        let msgs = openai["messages"].as_array().expect("messages array");
+
+        let sys_idx = msgs
+            .iter()
+            .position(|m| m["role"] == "system")
+            .expect("mid-conversation system 消息不应丢失");
+        assert_eq!(
+            msgs[sys_idx]["content"], "NEW RULE: from here, extra permissions",
+            "mid system 内容应保留"
+        );
+        // 位置语义：前面紧随 assistant，后面仍有 user 轮次（未被抽到顶层/错位）
+        assert_eq!(
+            msgs[sys_idx - 1]["role"], "assistant",
+            "mid system 应紧随 assistant 之后"
+        );
+        assert!(
+            msgs[sys_idx + 1..].iter().any(|m| m["role"] == "user"),
+            "mid system 之后应仍有 user 轮次"
+        );
+    }
+
     // ─── 响应方向：上游 adapter → 下游入口的 round-trip ──────────────
 
     /// 基础响应：上游 Claude 响应 → OpenAI 中间 → 下游 Claude 响应
