@@ -1,5 +1,6 @@
 use crate::database::{AccessKey, AppSettings, Database};
 use crate::error::AppError;
+#[cfg(feature = "gui")]
 use crate::AppState;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -7,6 +8,7 @@ use std::path::{Path, PathBuf};
 #[cfg(target_os = "windows")]
 use std::process::Command;
 use std::sync::Arc;
+#[cfg(feature = "gui")]
 use tauri::State;
 use tokio::sync::RwLock;
 
@@ -43,11 +45,13 @@ pub struct AppConfigResult {
     pub instructions: Option<String>,
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 pub fn list_connection_apps() -> Result<Vec<ConnectionAppItem>, AppError> {
     list_connection_apps_from_embedded()
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 pub async fn execute_connection_app(
     state: State<'_, AppState>,
@@ -67,7 +71,7 @@ pub async fn execute_connection_app_from_parts(
     execute_connection_app_with_context(id, settings.listen_port, &access_key, allow_file_write)
 }
 
-fn list_connection_apps_from_embedded() -> Result<Vec<ConnectionAppItem>, AppError> {
+pub fn list_connection_apps_from_embedded() -> Result<Vec<ConnectionAppItem>, AppError> {
     serde_json::from_str(CONNECTION_APPS_JSON)
         .map_err(|e| AppError::Internal(format!("解析连接应用清单失败: {e}")))
 }

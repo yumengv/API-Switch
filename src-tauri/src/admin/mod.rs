@@ -53,7 +53,7 @@ pub struct AdminServer {
 }
 
 impl AdminServer {
-    pub fn new(port: i32, runtime: AppState, app_handle: tauri::AppHandle) -> Self {
+    pub fn new(port: i32, runtime: AppState, app_handle: crate::AppEventHandle) -> Self {
         Self {
             port,
             state: AdminState::new_runtime(runtime, app_handle),
@@ -142,7 +142,7 @@ pub fn build_combined_router(settings: &AppSettings, state: AdminState) -> Optio
 
 pub async fn start_admin_if_enabled(
     runtime: AppState,
-    app_handle: tauri::AppHandle,
+    app_handle: crate::AppEventHandle,
     admin_slot: Arc<RwLock<Option<AdminServer>>>,
 ) -> Result<(), String> {
     let snapshot = runtime.settings.read().await.clone();
@@ -163,7 +163,7 @@ pub async fn start_admin_if_enabled(
 
 pub async fn restart_admin(
     runtime: AppState,
-    app_handle: tauri::AppHandle,
+    app_handle: crate::AppEventHandle,
     admin_slot: Arc<RwLock<Option<AdminServer>>>,
 ) -> Result<(), String> {
     if let Some(server) = admin_slot.write().await.take() {

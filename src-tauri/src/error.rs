@@ -42,6 +42,7 @@ impl From<reqwest::Error> for AppError {
     }
 }
 
+#[cfg(feature = "gui")]
 impl From<tauri::Error> for AppError {
     fn from(e: tauri::Error) -> Self {
         AppError::Internal(e.to_string())

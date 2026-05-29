@@ -18,7 +18,6 @@ use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 use std::task::Poll;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tauri::Emitter;
 use tokio::time::sleep;
 
 const STREAMING_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
@@ -341,7 +340,7 @@ struct ForwardResult {
 struct StreamLogGuard {
     logged: Arc<AtomicBool>,
     db: Arc<Database>,
-    app_handle: Option<tauri::AppHandle>,
+    app_handle: Option<crate::AppEventHandle>,
     access_key: Option<AccessKey>,
     entry: ApiEntry,
     requested_model: String,
@@ -438,7 +437,7 @@ impl Drop for StreamLogGuard {
                         chrono::Utc::now().timestamp() + empty_stream_cooldown_secs;
                     let _ = db.set_entry_cooldown(&entry.id, Some(cooldown_until));
                     if let Some(h) = &app_handle {
-                        let _ = h.emit("entries-changed", ());
+                        crate::event::emit(h, "entries-changed");
                     }
                     crate::state_version::bump("pool");
                     log::warn!(
@@ -1809,7 +1808,7 @@ fn append_and_parse_sse(
     Some(Bytes::from(output))
 }
 
-fn refresh_tray(app_handle: &Option<tauri::AppHandle>) {
+fn refresh_tray(app_handle: &Option<crate::AppEventHandle>) {
     if let Some(h) = app_handle {
         refresh_tray_if_enabled(h);
     }
@@ -1861,7 +1860,7 @@ async fn disable_entry(state: &ProxyState, entry: &ApiEntry) {
     let _ = state.db.toggle_entry(&entry.id, false);
     let _ = state.db.set_entry_cooldown(&entry.id, Some(cooldown_until));
     if let Some(h) = &state.app_handle {
-        let _ = h.emit("entries-changed", ());
+        crate::event::emit(h, "entries-changed");
     }
     crate::state_version::bump("pool");
     refresh_tray(&state.app_handle);
@@ -1879,7 +1878,7 @@ async fn freeze_channel_entries(state: &ProxyState, entry: &ApiEntry) {
     {
         Ok(entry_ids) => {
             if let Some(h) = &state.app_handle {
-                let _ = h.emit("entries-changed", ());
+                crate::event::emit(h, "entries-changed");
             }
             crate::state_version::bump("pool");
             refresh_tray(&state.app_handle);
@@ -1910,7 +1909,7 @@ async fn freeze_channel_entries(state: &ProxyState, entry: &ApiEntry) {
 async fn record_circuit_success(state: &ProxyState, entry_id: &str) {
     let _ = state.db.set_entry_cooldown(entry_id, None);
     if let Some(h) = &state.app_handle {
-        let _ = h.emit("entries-changed", ());
+        crate::event::emit(h, "entries-changed");
     }
     crate::state_version::bump("pool");
     refresh_tray(&state.app_handle);
@@ -1948,7 +1947,7 @@ async fn cool_down_entry(state: &ProxyState, entry: &ApiEntry) {
             .set_entry_cooldown(&entry.id, Some(six_hours_later));
         let _ = state.db.toggle_entry(&entry.id, false);
         if let Some(h) = &state.app_handle {
-            let _ = h.emit("entries-changed", ());
+            crate::event::emit(h, "entries-changed");
         }
         crate::state_version::bump("pool");
         refresh_tray(&state.app_handle);
@@ -1967,7 +1966,7 @@ async fn cool_down_entry(state: &ProxyState, entry: &ApiEntry) {
     let cooldown_until = chrono::Utc::now().timestamp() + recovery_secs as i64;
     let _ = state.db.set_entry_cooldown(&entry.id, Some(cooldown_until));
     if let Some(h) = &state.app_handle {
-        let _ = h.emit("entries-changed", ());
+        crate::event::emit(h, "entries-changed");
     }
     crate::state_version::bump("pool");
     refresh_tray(&state.app_handle);
@@ -1995,7 +1994,7 @@ fn spawn_record_circuit_success(
     failure_counts: Arc<tokio::sync::RwLock<std::collections::HashMap<String, u32>>>,
     settings: Arc<tokio::sync::RwLock<AppSettings>>,
     db: Arc<Database>,
-    app_handle: Option<tauri::AppHandle>,
+    app_handle: Option<crate::AppEventHandle>,
     entry_id: String,
 ) {
     tokio::spawn(async move {
@@ -2004,7 +2003,7 @@ fn spawn_record_circuit_success(
         let _ = db.set_entry_cooldown(&entry_id, None);
         crate::state_version::bump("pool");
         if let Some(h) = &app_handle {
-            let _ = h.emit("entries-changed", ());
+            crate::event::emit(h, "entries-changed");
         }
         crate::state_version::bump("pool");
         refresh_tray(&app_handle);
@@ -2026,7 +2025,7 @@ fn spawn_cool_down_entry(
     failure_counts: Arc<tokio::sync::RwLock<std::collections::HashMap<String, u32>>>,
     settings: Arc<tokio::sync::RwLock<AppSettings>>,
     db: Arc<Database>,
-    app_handle: Option<tauri::AppHandle>,
+    app_handle: Option<crate::AppEventHandle>,
     entry_id: String,
 ) {
     tokio::spawn(async move {
@@ -2048,7 +2047,7 @@ fn spawn_cool_down_entry(
             let _ = db.set_entry_cooldown(&entry_id, Some(six_hours_later));
             let _ = db.toggle_entry(&entry_id, false);
             if let Some(h) = &app_handle {
-                let _ = h.emit("entries-changed", ());
+                crate::event::emit(h, "entries-changed");
             }
             crate::state_version::bump("pool");
             refresh_tray(&app_handle);
@@ -2064,7 +2063,7 @@ fn spawn_cool_down_entry(
         let cooldown_until = chrono::Utc::now().timestamp() + recovery_secs as i64;
         let _ = db.set_entry_cooldown(&entry_id, Some(cooldown_until));
         if let Some(h) = &app_handle {
-            let _ = h.emit("entries-changed", ());
+            crate::event::emit(h, "entries-changed");
         }
         crate::state_version::bump("pool");
         refresh_tray(&app_handle);
@@ -2088,7 +2087,7 @@ fn spawn_cool_down_entry(
 
 fn log_usage(
     db: &Database,
-    app_handle: &Option<tauri::AppHandle>,
+    app_handle: &Option<crate::AppEventHandle>,
     access_key: Option<&AccessKey>,
     entry: &ApiEntry,
     requested_model: &str,
@@ -2153,7 +2152,7 @@ fn log_usage(
     }
 
     if let Some(h) = app_handle {
-        let _ = h.emit("new-usage-log", ());
+        crate::event::emit(h, "new-usage-log");
     }
 }
 

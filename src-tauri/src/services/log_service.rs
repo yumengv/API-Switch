@@ -27,7 +27,7 @@ pub struct TestUsageLogInput<'a> {
 /// 只记录元数据、耗时和 token 用量，不记录 API Key、用户提示词、请求体或模型回复。
 pub fn insert_test_usage_log(
     db: &Database,
-    app_handle: Option<&tauri::AppHandle>,
+    app_handle: Option<&crate::AppEventHandle>,
     input: TestUsageLogInput<'_>,
 ) {
     let log_type = if input.success { 2 } else { 5 };
@@ -82,7 +82,7 @@ pub fn insert_test_usage_log(
     }
 
     if let Some(handle) = app_handle {
-        let _ = tauri::Emitter::emit(handle, "new-usage-log", ());
+        crate::event::emit(handle, "new-usage-log");
     }
     crate::state_version::bump("log");
 }

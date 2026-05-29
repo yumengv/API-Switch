@@ -26,7 +26,7 @@ pub fn create_access_key(db: &Database, name: &str) -> Result<AccessKey, AppErro
 pub fn delete_access_key(
     db: &Database,
     id: &str,
-    app: Option<&tauri::AppHandle>,
+    app: Option<&crate::AppEventHandle>,
 ) -> Result<(), AppError> {
     db.delete_access_key(id)?;
     if let Some(app) = app {
@@ -41,7 +41,7 @@ pub fn toggle_access_key(
     db: &Database,
     id: &str,
     enabled: bool,
-    app: Option<&tauri::AppHandle>,
+    app: Option<&crate::AppEventHandle>,
 ) -> Result<(), AppError> {
     db.toggle_access_key(id, enabled)?;
     if let Some(app) = app {

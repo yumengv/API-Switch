@@ -5,6 +5,7 @@ mod database;
 mod data_dir;
 pub(crate) mod embedded_pool;
 mod error;
+mod event;
 mod state_version;
 mod proxy;
 mod runtime_mode;
@@ -17,11 +18,17 @@ use runtime_mode::{ModeSource, RuntimeMode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+#[cfg(feature = "gui")]
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
+#[cfg(feature = "gui")]
 use tauri::{Emitter, Manager};
 use tokio::sync::Mutex;
 
 pub use error::AppError;
+pub(crate) use event::AppEventHandle;
+
+#[cfg(not(feature = "gui"))]
+pub(crate) use event::refresh_tray_if_enabled;
 
 /// Latest translation relay result cached in memory for the Web Admin display.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,6 +73,16 @@ pub fn run() {
         return;
     }
 
+    #[cfg(feature = "gui")]
+    run_gui(runtime_mode);
+
+    // Headless-only builds have no GUI runtime; always fall back to headless.
+    #[cfg(not(feature = "gui"))]
+    run_headless();
+}
+
+#[cfg(feature = "gui")]
+fn run_gui(runtime_mode: RuntimeMode) {
     let _app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
@@ -283,6 +300,7 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
+#[cfg(feature = "gui")]
 pub(crate) fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let app_state = app.state::<AppState>();
 
@@ -341,11 +359,15 @@ pub(crate) fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<taur
     Menu::with_items(app, &all)
 }
 
+#[cfg(feature = "gui")]
 use std::sync::OnceLock;
 
+#[cfg(feature = "gui")]
 const TRAY_DEBOUNCE_MS: u64 = 1500;
+#[cfg(feature = "gui")]
 static LAST_TRAY_REFRESH: OnceLock<std::sync::Mutex<std::time::Instant>> = OnceLock::new();
 
+#[cfg(feature = "gui")]
 fn tray_debounce_check() -> bool {
     let now = std::time::Instant::now();
     let lock = LAST_TRAY_REFRESH.get_or_init(|| std::sync::Mutex::new(now));
@@ -359,6 +381,7 @@ fn tray_debounce_check() -> bool {
     true
 }
 
+#[cfg(feature = "gui")]
 pub(crate) fn refresh_tray_if_enabled(app: &tauri::AppHandle) {
     if EXPERIMENTAL_LAZY_TRAY_REFRESH {
         return;
@@ -373,6 +396,7 @@ pub(crate) fn refresh_tray_if_enabled(app: &tauri::AppHandle) {
     }
 }
 
+#[cfg(feature = "gui")]
 fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
     log::info!("[tray] menu event: {event_id}");
 

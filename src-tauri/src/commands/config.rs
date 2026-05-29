@@ -3,10 +3,11 @@ use crate::database::AppSettings;
 use crate::error::AppError;
 use crate::AppState;
 use serde::Deserialize;
+#[cfg(feature = "gui")]
 use tauri::State;
 
 async fn restart_proxy_if_running(
-    app: tauri::AppHandle,
+    app: crate::AppEventHandle,
     state: &AppState,
     previous_settings: &AppSettings,
 ) -> Result<(), AppError> {
@@ -66,8 +67,10 @@ async fn restart_proxy_if_running(
     Ok(())
 }
 
+#[cfg(feature = "gui")]
 const GITHUB_REPO: &str = "wang1970/API-Switch";
 
+#[cfg(feature = "gui")]
 #[derive(Deserialize)]
 struct GithubRelease {
     tag_name: String,
@@ -76,6 +79,7 @@ struct GithubRelease {
     body: Option<String>,
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 pub async fn check_update() -> Result<Option<serde_json::Value>, AppError> {
     let current = env!("CARGO_PKG_VERSION");
@@ -162,7 +166,7 @@ pub async fn refresh_settings_l1(state: &AppState) -> Result<AppSettings, AppErr
 }
 
 pub async fn apply_settings_update(
-    app: tauri::AppHandle,
+    app: crate::AppEventHandle,
     state: &AppState,
     settings: AppSettings,
     restart_async: bool,
@@ -172,7 +176,7 @@ pub async fn apply_settings_update(
 }
 
 pub async fn apply_settings_update_with_restart(
-    app: tauri::AppHandle,
+    app: crate::AppEventHandle,
     state: &AppState,
     settings: AppSettings,
     restart_async: bool,
@@ -233,7 +237,7 @@ pub async fn apply_settings_update_with_restart(
         if restart_async {
             // For async mode, mark that restart was triggered
             restart_info.proxy_restarted = true;
-            tauri::async_runtime::spawn(async move {
+            tokio::spawn(async move {
                 match restart_work.await {
                     Ok(_) => log::debug!("Settings side effects applied successfully"),
                     Err(e) => log::error!("Failed to apply settings runtime side effects: {e}"),
@@ -249,11 +253,13 @@ pub async fn apply_settings_update_with_restart(
     Ok(Some(restart_info))
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 pub async fn get_settings(state: State<'_, AppState>) -> Result<AppSettings, AppError> {
     Ok(state.settings.read().await.clone())
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 pub async fn update_settings(
     app: tauri::AppHandle,

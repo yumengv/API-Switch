@@ -1,24 +1,10 @@
 # TODO
 
-> 执行级待办清单，按优先级排列。状态标记：⏳ 待开始 / 🔄 进行中 / ✅ 已完成 / ❌ 阻塞
+> 执行级待办清单，按优先级排列。状态标记：⏳ 待开始 / 🔄 进行中 / ❌ 阻塞
 
 ---
 
 ## P0
-
-### ⏳ Web Admin 路线落地收尾
-
-- **设置更新与版本冲突闭环**：完善 Web 端设置更新的版本一致性处理
-- **登录 / token / 鉴权收尾**：修复 validateToken 网络异常时的逻辑缺陷
-
-### ✅ Web 退出登录有时卡住
-
-**已修复：** 前端退出登录改为乐观更新 + fire-and-forget，不再等待后端响应。同时 Session TTL 从 24 小时缩短为 30 分钟。
-
-**关联文件：**
-- `src/App.tsx` — handleLogout() 乐观更新
-- `src-tauri/src/admin/handlers.rs` — SESSION_TTL 30 分钟
-- `src-tauri/src/admin/auth.rs` — require_auth 续期 30 分钟
 
 ### ⏳ 依赖膨胀分析落地
 
@@ -64,51 +50,6 @@
 - `package.json` — Radix UI 组件库依赖
 - `src/components/ui/` — 基础 UI 组件
 
-### ⏳ AUTO 路由下 resolved model 可视化的 OpenAI 流兼容问题
-
-**来源：** 使用 `AUTO` 模型时，用户需要明确知道实际命中的上游模型（resolved model）。当前 API-Switch 在 `/v1/chat/completions` 的 `stream=true` 响应尾部额外追加一条调试文本 chunk，例如：
-
-```text
-data: {"choices":[{"delta":{"content":"\n\nmodel: gpt-5.4"}}]}
-```
-
-这条输出不是完整合法的 OpenAI `chat.completion.chunk` 对象。像 Zed 这类严格按 OpenAI 兼容流式协议解析的客户端，会在反序列化 `ResponseStreamResult` 时失败，报错：
-
-```text
-data did not match any variant of untagged enum ResponseStreamResult
-```
-
-**现状定位：**
-- `/v1/models` 正常
-- 非流式 `/v1/chat/completions` 正常
-- 流式前几个标准 chunk 正常
-- 问题出在流尾部追加的 resolved model 文本 chunk 不是标准 OpenAI SSE chunk
-- 当前前面的标准 chunk 已带有 `model` 字段（如 `"model":"gpt-5.4"`），但部分客户端 UI 不会直接展示，所以现有实现又把 resolved model 作为正文文本附加输出
-
-**关键约束：**
-- 不能简单去掉 resolved model 的展示需求，因为 `AUTO` 路由场景下，用户确实需要知道实际在与哪个模型对话
-- 但也不能继续输出非标准 chunk，否则会破坏 Zed 等严格客户端兼容性
-
-**解决方向：**
-- 方案 A（推荐）：将 resolved model 作为**标准合法的 `chat.completion.chunk`** 输出，而不是当前这种裸 `choices.delta.content` 半结构对象。至少需要补齐 `id / object / created / model / choices[index] / finish_reason` 等标准字段，确保每个 `data:` 都能被 OpenAI 兼容客户端正常解析
-- 方案 B：在不污染正文语义的前提下，把 resolved model 通过**标准字段、响应头或自定义 debug 通道**提供给自家 UI；第三方 OpenAI 客户端保持纯标准输出
-- 方案 C：评估是否可在最终非流式汇总对象或自定义 metadata 中暴露 resolved model，并由 Web Admin / 自家前端显式展示
-
-**实现注意点：**
-- 如果继续把 resolved model 作为 `delta.content` 发出，即使格式合法，也会进入聊天正文，语义上属于“系统附加说明”而非模型原始回答，需要确认这是否符合产品预期
-- 如果要兼容第三方客户端（Zed、Cherry Studio、OpenWebUI 某些兼容层等），`stream=true` 时务必只输出客户端能接受的标准 SSE 事件
-- 流式结束顺序也要规范，避免在 finish / usage 之后再追加不完整事件
-
-**建议验收：**
-- 用 Zed 的 `openai_compatible` provider 直接连接 API-Switch，验证不再出现 `ResponseStreamResult` 解析错误
-- 抓取原始 SSE，确认 resolved model 相关事件已是完整合法 chunk
-- 确认用户仍能看见 AUTO 实际命中的模型名称
-
-**关联文件：**
-- `src-tauri/src/proxy/...` 中 OpenAI Chat Completions 流式输出拼装逻辑
-- AUTO 路由 resolved model 注入逻辑
-- 前端 resolved model 展示逻辑（若改为 UI 显示）
-
 ### ⏳ 对话中显示的模型名来源不明 — model info 注入数据追踪
 
 **来源：** 用户在对话（OpenCode/CLI）中看到的模型标签如 `deepseek-v4-singapore`、`deepseek-v4-flash`、`gpt-5.5` 等，部分名称在当前 AUTO 分组的 api_entries 中并不存在。这些显示名疑似来自：
@@ -124,27 +65,6 @@ data did not match any variant of untagged enum ResponseStreamResult
 **关联文件：**
 - `src-tauri/src/proxy/forwarder.rs` — `model_info_delta()` 注入逻辑（L1605-L1624）、`stream_chunk_has_model_info_delta()` 检测上游已有模型信息（L1534-L1550）
 - `src-tauri/src/proxy/forwarder.rs` — 非流式响应 `resolved_model` 日志字段（L243、L2113）
-
-### ✅ 中间格式到上游协议的字段剥离缺失
-
-**已修复：** 所有主要 adapter 已实现白名单过滤，按"中间协议 → 输出协议时，只有目标协议明确支持的标准字段 + 明确扩展字段 + 语义等价可转换内容才允许输出，其余一律丢弃"的原则。
-
-**实现方式：**
-- **OpenAI / Azure**：`build_openai_request_output` / `build_azure_request_output` 显式白名单构建器
-- **Claude / Gemini**：`transform_request` 从 `json!({})` 重建对象，只映射已知字段
-- **Responses**：`filter_responses_response_fields` 白名单过滤
-- **Custom**：历史遗留，仅修改 URL，不做过滤（无需处理）
-
-**关联文件：**
-- `src-tauri/src/proxy/protocol/openai.rs` — `OPENAI_REQUEST_ALLOWED_FIELDS` + `OPENAI_EXTENSION_FIELDS`
-- `src-tauri/src/proxy/protocol/azure.rs` — `build_azure_request_output`
-- `src-tauri/src/proxy/protocol/claude.rs` — `transform_request_to_anthropic` 重建
-- `src-tauri/src/proxy/protocol/gemini.rs` — `transform_request_to_gemini` 重建
-- `src-tauri/src/proxy/protocol/responses.rs` — `filter_responses_response_fields`
-
-### ✅ Gemini 协议端点兼容
-
-- **端点探测增强**：已实现。`channel_service.rs` 探测时同时尝试 `/v1beta/openai/`（OpenAI 兼容）和 `/v1beta/models`（原生）两种端点，自动校准 base_url。`protocol/gemini.rs` 提供完整的原生端点 URL 构建（`generateContent` / `streamGenerateContent` / `models`）。`join_url` 已处理 `/v1beta` 前缀去重。
 
 ---
 
@@ -168,17 +88,12 @@ data did not match any variant of untagged enum ResponseStreamResult
 **关联：** `src-tauri/src/proxy/forwarder.rs`、`src-tauri/src/proxy/protocol/*.rs` 各 adapter 的 `transform_request`
 
 ---
+
 ## P2
 
 ### ⏳ Gemini 原生协议端点补全
 
 - **countTokens / embedContent / batchEmbedContents**：直接转发 Gemini 上游的专用端点
-
-### ⏳ Claude 协议边角一致性优化
-
-- **边角字段严格对齐**：补充 stop_sequence 等官方字段
-- **thinking 输出面纯化**：明确官方语义与内部兼容承载的边界
-- **流式 SSE 边角事件一致性补测**：补全极端事件组合测试
 
 ### ⏳ 渠道启用状态接入路由
 
@@ -186,44 +101,52 @@ data did not match any variant of untagged enum ResponseStreamResult
 
 **方案：** 渠道状态影响路由模型筛选。需要评估影响面——渠道涉及较多关联点，建议引入 L1 缓存
 
-### ⏳ Responses 路径稳定性——拦截 reasoning input 和 Responses 专有字段
-
-**来源：** Responses→Chat 转换后，type:reasoning input 项生成错误消息，include/store/metadata 等 Responses 专有字段泄漏到上游 Chat 请求
-
-**状态：** 已实现基础拦截（input_to_messages 跳过 reasoning 项 + handler 层剥离专有字段）
-
-**后续：** 需要支持思维链正常透传（见 P3）
-
 ---
 
 ## P3
-
-### ⏳ 思维链支持（Thinking/Reasoning 透传）
-
-**来源：** 当前所有 reasoning/thinking 字段被拦截以保证稳定性。长远需要让上游支持思维链的模型正常接收这些字段
-
-**方案：**
-- 改为按 allowlist 而非 denylist 控制
-- 仅在已知不支持思维链的 API（如不支持 reasoning_effort 的上游）才拦截
-- 需要逐个上游测试确认
-
-### ⏳ Tauri v2 安全基线
-
-- 收紧 CSP 策略、最小化 capabilities
-
-### ⏳ 单实例与窗口状态持久化
-
-- 避免多进程争抢、记住窗口位置
-
-### ⏳ 跨平台 WebView 兼容矩阵
-
-- 建立各平台冒线测试清单
 
 ### ⏳ 全局错误语义统一
 
 - 统一 IPC 与 HTTP 错误结构、UI 反馈一致性
 
+---
 
-## 已完成
+## 📋 策划文档摘要
 
-- （暂无）
+### docs/GENERIC_AGENT_FLOATING_AGENT_PLAN.md — Agent 集成方案
+
+**目标**：右下角独立机器人入口，点击后自动连接 GenericAgent 并打开独立对话窗口
+
+**当前状态**：方案设计阶段
+
+**核心设计**：
+- 独立透明小窗口 `agent-launcher`（always_on_top）
+- 独立对话窗口 `agent-chat`（不依赖主窗口）
+- 完整 pipeline：检查配置 → 启动 proxy → 启动 GA adapter → 等待 ready → 打开窗口
+
+**待办**：
+- 实现 `agent-launcher` 窗口
+- 实现 `ensure_runtime_ready` 流程
+- 实现 `agent-chat` 窗口及连接逻辑
+
+**优先级建议**：P2（核心功能稳定后）
+
+---
+
+### docs/security-audit.md — 公网安全审核
+
+**审核日期**：2026-05-15（v0.6.12）
+
+**风险统计**：6 个高风险、4 个中风险、3 个低风险
+
+**高风险问题**：
+1. **RISK-01**: CORS 完全开放（允许任意源）
+2. **RISK-02**: 默认弱密码 admin/admin，首次运行不强制修改
+3. **RISK-03**: 数据库明文存储 API Key
+4. **RISK-04**: 调试模式跳过所有认证
+5. **RISK-05**: 无请求体大小限制（proxy 层 32MB）
+6. **RISK-06**: 缺少速率限制和 IP 黑名单
+
+**优先级建议**：
+- 本地使用：P3（当前架构面向本地/内网）
+- 公网部署前：P0（必须修复 RISK-01~06）

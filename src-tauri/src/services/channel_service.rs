@@ -11,7 +11,6 @@ use crate::error::AppError;
 use crate::proxy::protocol::get_adapter;
 use crate::services::api_key_utils::primary_api_key;
 use serde::{Deserialize, Serialize};
-use tauri::Emitter;
 
 #[derive(Deserialize)]
 #[allow(dead_code)]
@@ -262,7 +261,7 @@ pub fn create_channel(db: &Database, params: CreateChannelParams) -> Result<Chan
 
 pub fn update_channel(
     db: &Database,
-    app: Option<&tauri::AppHandle>,
+    app: Option<&crate::AppEventHandle>,
     params: UpdateChannelParams,
 ) -> Result<Channel, AppError> {
     if let Some(false) = params.enabled {
@@ -278,7 +277,7 @@ pub fn update_channel(
         params.notes.as_deref(),
     )?;
     if let Some(app) = app {
-        let _ = app.emit("channels-changed", ());
+        crate::event::emit(app, "channels-changed");
         crate::refresh_tray_if_enabled(app);
     }
     crate::state_version::bump("channel");
@@ -287,12 +286,12 @@ pub fn update_channel(
 
 pub fn delete_channel(
     db: &Database,
-    app: Option<&tauri::AppHandle>,
+    app: Option<&crate::AppEventHandle>,
     id: String,
 ) -> Result<(), AppError> {
     db.delete_channel(&id)?;
     if let Some(app) = app {
-        let _ = app.emit("channels-changed", ());
+        crate::event::emit(app, "channels-changed");
         crate::refresh_tray_if_enabled(app);
     }
     crate::state_version::bump("channel");
@@ -1265,7 +1264,7 @@ pub async fn test_channel_direct(params: TestChannelDirectParams) -> TestChannel
 
 pub fn save_channel_with_models(
     db: &Database,
-    app: Option<&tauri::AppHandle>,
+    app: Option<&crate::AppEventHandle>,
     params: SaveChannelWithModelsParams,
 ) -> Result<SaveChannelWithModelsResult, AppError> {
     let mut warnings = Vec::new();
@@ -1326,8 +1325,8 @@ pub fn save_channel_with_models(
 
     // 4. Notifications & Dirty flags
     if let Some(app) = app {
-        let _ = app.emit("channels-changed", ());
-        let _ = app.emit("entries-changed", ());
+        crate::event::emit(app, "channels-changed");
+        crate::event::emit(app, "entries-changed");
         crate::refresh_tray_if_enabled(app);
     }
     crate::state_version::bump("channel");

@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 jobs:
   release:
@@ -94,8 +95,78 @@ jobs:
           name: ${{ matrix.asset }}
           path: artifact/*
 
+  release-headless:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            asset: api-switch-${{ github.ref_name }}-linux-x64-headless
+          - platform: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            asset: api-switch-${{ github.ref_name }}-linux-arm64-headless
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: headless-${{ matrix.target }}
+
+      - name: Install pnpm and dependencies
+        run: |
+          npm install -g pnpm
+          pnpm install --frozen-lockfile
+          pnpm remove sharp png-to-ico
+
+      - name: Build web-admin assets
+        run: pnpm build:web-admin
+
+      - name: Build headless binary
+        working-directory: src-tauri
+        run: cargo build --release --no-default-features --target ${{ matrix.target }}
+
+      - name: Verify no GUI libraries linked
+        run: |
+          binary="src-tauri/target/${{ matrix.target }}/release/api-switch"
+          if readelf -d "$binary" | grep -Ei 'libwebkit2gtk|libgtk-3|libgtk-4|libsoup'; then
+            echo "::error::Headless binary unexpectedly links GUI libraries"
+            exit 1
+          fi
+          echo "OK: no GTK/WebKit/libsoup NEEDED entries"
+
+      - name: Prepare artifact (rename)
+        run: |
+          mkdir -p artifact
+          cp "src-tauri/target/${{ matrix.target }}/release/api-switch" "artifact/${{ matrix.asset }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: artifact/*
+
   publish:
-    needs: release
+    needs: [release, release-headless]
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -123,6 +194,8 @@ jobs:
             - `api-switch-macos-arm64` — macOS Apple Silicon
             - `api-switch-linux-x64` — Linux x64
             - `api-switch-linux-arm64` — Linux ARM64
+            - `api-switch-linux-x64-headless` — Linux x64 (无 GUI，体积更小，适合服务器/Termux)
+            - `api-switch-linux-arm64-headless` — Linux ARM64 (无 GUI，适合服务器/Termux)
 
             **Installers** (system integration):
             - `*.msi` / `*.exe` — Windows installer

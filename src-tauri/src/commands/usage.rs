@@ -1,10 +1,16 @@
+#[cfg(feature = "gui")]
 use crate::database::*;
+#[cfg(feature = "gui")]
 use crate::error::AppError;
+#[cfg(feature = "gui")]
 use crate::services::log_service;
+#[cfg(feature = "gui")]
 use crate::AppState;
 use serde::Deserialize;
+#[cfg(feature = "gui")]
 use tauri::State;
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 pub fn get_usage_logs(
     state: State<'_, AppState>,
@@ -13,6 +19,7 @@ pub fn get_usage_logs(
     log_service::get_usage_logs(&state.db, &filter)
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 pub fn get_dashboard_stats(
     state: State<'_, AppState>,
@@ -22,6 +29,7 @@ pub fn get_dashboard_stats(
     log_service::get_dashboard_stats(&state.db, start, end)
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 pub fn get_model_consumption(
     state: State<'_, AppState>,
@@ -31,6 +39,7 @@ pub fn get_model_consumption(
     log_service::get_model_consumption(&state.db, start, end, granularity.as_deref())
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 pub fn get_call_trend(
     state: State<'_, AppState>,
@@ -40,6 +49,7 @@ pub fn get_call_trend(
     log_service::get_call_trend(&state.db, start, end, granularity.as_deref())
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 pub fn get_model_distribution(
     state: State<'_, AppState>,
@@ -49,6 +59,7 @@ pub fn get_model_distribution(
     log_service::get_model_distribution(&state.db, start, end)
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 pub fn get_model_ranking(
     state: State<'_, AppState>,
@@ -58,6 +69,7 @@ pub fn get_model_ranking(
     log_service::get_model_ranking(&state.db, start, end)
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 pub fn get_user_ranking(
     state: State<'_, AppState>,
@@ -67,6 +79,7 @@ pub fn get_user_ranking(
     log_service::get_user_ranking(&state.db, start, end)
 }
 
+#[cfg(feature = "gui")]
 #[tauri::command]
 pub fn get_user_trend(
     state: State<'_, AppState>,
@@ -83,6 +96,7 @@ pub struct DashboardFilterParams {
     pub granularity: Option<String>,
 }
 
+#[cfg(feature = "gui")]
 fn parse_filter(
     filter: Option<DashboardFilterParams>,
 ) -> (Option<i64>, Option<i64>, Option<String>) {

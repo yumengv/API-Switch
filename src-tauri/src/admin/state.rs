@@ -23,11 +23,11 @@ pub struct AdminState {
     pub login_sessions: Arc<RwLock<HashMap<String, SessionInfo>>>,
     pub login_failures: Arc<Mutex<HashMap<String, LoginFailureState>>>,
     pub runtime: Option<AppState>,
-    pub app_handle: Option<tauri::AppHandle>,
+    pub app_handle: Option<crate::AppEventHandle>,
 }
 
 impl AdminState {
-    pub fn new_runtime(runtime: AppState, app_handle: tauri::AppHandle) -> Self {
+    pub fn new_runtime(runtime: AppState, app_handle: crate::AppEventHandle) -> Self {
         Self {
             db: runtime.db.clone(),
             settings: runtime.settings.clone(),
@@ -40,13 +40,13 @@ impl AdminState {
 
     pub fn mark_channel_dirty(&self) {
         if let Some(handle) = &self.app_handle {
-            let _ = tauri::Emitter::emit(handle, "channels-changed", ());
+            crate::event::emit(handle, "channels-changed");
         }
     }
 
     pub fn mark_pool_dirty(&self) {
         if let Some(handle) = &self.app_handle {
-            let _ = tauri::Emitter::emit(handle, "entries-changed", ());
+            crate::event::emit(handle, "entries-changed");
             crate::refresh_tray_if_enabled(handle);
         }
     }
