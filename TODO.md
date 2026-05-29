@@ -10,7 +10,12 @@
 
 **来源：** 2026-05-28 Claude Opus 4.8 发布、2026-05-29 Claude Code v2.1.154 启用 **mid-conversation system messages**（`role:"system"` 置于 `messages` 数组中间，紧跟 user turn）。中间层 `transform_request_to_anthropic`（`claude.rs:135-154`）把**所有** system 角色无差别抽进顶层 `system`，摧毁其位置语义，导致 **Claude→Claude 与 Claude→OpenAI 中转不可用**。
 
-**状态：** 分析与方案完成，**待审核**（详见 `docs/protocol-passthrough-fix-plan.md`，已过两轮多角度自审）。实现拟在 Codex。
+**状态：** ✅ P0 实现完成（分支 `fix/claude-midconv-system`，289 proxy 测试通过），**待真实 Claude Code v2.1.154 经代理端到端回归**（合成 curl 过不了上游 nzbrr 身份挡板）。
+- P0-A 同协议直通：commit `809e040`。
+- 跨协议出口黑名单默认：commit `cd99509`。
+- mid-system 保位测试：commit `86a0902`。
+- P0-C：经核实无需改代码（Claude→OpenAI 的 `_` 兜底已保位；OpenAI→Claude 的 hoisting 故意保留以免老模型回归）。
+- 详见 `docs/protocol-passthrough-fix-plan.md`（两轮自审 + 实测记录）。
 
 **对症方案：**
 - **P0-A 同协议直通**（Claude→Claude）：仿 Responses 的 `__as_raw_responses_req` + `RESPONSES_PASSTHROUGH_HEADER`，原始体直送上游，由 Opus 4.8 自行处理 mid-system。必须同时处理：响应方向跨两层（`forward_single:765` + `handle_messages:385`）、直通后 `apply_disable_reasoning`/`StreamOptionsMiddleware` 的 OpenAI 结构假定、暂存字段转发前剥离。
