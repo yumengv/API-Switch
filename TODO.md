@@ -112,6 +112,17 @@
 
 ## P2
 
+### ⏳ 清理排序模式（fastest/latest）死代码
+
+**来源：** `default_sort_mode`(fastest/latest/custom)在**实际路由 `resolve` 里从不生效**——`resolve` 的 `_sort_mode` 参数被忽略，`available_entries` 内部写死 `sort_by_index`。`apply_sort_mode` 仅在 `load_sorted_entries`(`/v1/models` 模型列表展示)被调用。即：排序模式只影响**列表展示顺序**，不影响 **AUTO 实际转发**（后者恒按 `sort_index`）。
+
+**结论：** 非紧急、无实际故障。清理牵涉前后端 + config + DB（影响大），暂缓，单独处理。
+
+**关联（清理范围）：**
+- 后端：`src-tauri/src/proxy/router.rs`(`apply_sort_mode`/`sort_by_latency`/`sort_by_release_date`/`parse_response_ms`/`parse_release_date`、`resolve` 的 `_sort_mode`)、`handlers.rs`/`responses_handler.rs` 各处 `sort_mode` 传参
+- config：`config_dao.rs`/`schema.rs` 的 `default_sort_mode`（DB 留废弃列）
+- 前端：`src/types.ts`(`ModelSortMode`)、`src/lib/modelsCatalog.ts`、`i18n` 的 `latest`/`fastest`
+
 ### ⏳ Gemini 原生协议端点补全
 
 - **countTokens / embedContent / batchEmbedContents**：直接转发 Gemini 上游的专用端点
