@@ -506,7 +506,9 @@ pub fn responses_to_openai_chat_request(req_body: &Value) -> (Value, bool, Strin
     // text.format → response_format（Responses→Chat 反向映射）
     if let Some(text_obj) = req_body.get("text").and_then(|v| v.as_object()) {
         if let Some(format) = text_obj.get("format") {
-            chat_body["response_format"] = format.clone();
+            if let Some(response_format) = chat_response_format_from_text_format(format) {
+                chat_body["response_format"] = response_format;
+            }
         }
     }
 
@@ -516,14 +518,11 @@ pub fn responses_to_openai_chat_request(req_body: &Value) -> (Value, bool, Strin
         ("service_tier", "service_tier"),
         ("top_logprobs", "top_logprobs"),
         ("stream_options", "stream_options"),
-        ("max_tool_calls", "max_tool_calls"),
         ("include", "include"),
         ("prompt", "prompt"),
         ("prompt_cache_key", "prompt_cache_key"),
         ("prompt_cache_retention", "prompt_cache_retention"),
         ("safety_identifier", "safety_identifier"),
-        ("tool_choice", "tool_choice"),
-        ("parallel_tool_calls", "parallel_tool_calls"),
     ] {
         if let Some(value) = req_body.get(field.0) {
             chat_body[field.1] = value.clone();
@@ -537,6 +536,15 @@ pub fn responses_to_openai_chat_request(req_body: &Value) -> (Value, bool, Strin
     if let Some(tools) = req_body.get("tools").and_then(|v| v.as_array()) {
         if let Some(converted) = convert_tools(tools) {
             chat_body["tools"] = converted;
+            for field in [
+                ("tool_choice", "tool_choice"),
+                ("parallel_tool_calls", "parallel_tool_calls"),
+                ("max_tool_calls", "max_tool_calls"),
+            ] {
+                if let Some(value) = req_body.get(field.0) {
+                    chat_body[field.1] = value.clone();
+                }
+            }
         }
     }
 
@@ -546,7 +554,18 @@ pub fn responses_to_openai_chat_request(req_body: &Value) -> (Value, bool, Strin
                 continue;
             }
             // Skip fields already consumed by Responses→Chat conversion
-            if key == "input" || key == "instructions" || key == "reasoning" || key == "text" {
+            if matches!(
+                key.as_str(),
+                "input"
+                    | "instructions"
+                    | "reasoning"
+                    | "text"
+                    | "response_format"
+                    | "tools"
+                    | "tool_choice"
+                    | "parallel_tool_calls"
+                    | "max_tool_calls"
+            ) {
                 continue;
             }
             chat_obj.insert(key.clone(), value.clone());
@@ -554,6 +573,16 @@ pub fn responses_to_openai_chat_request(req_body: &Value) -> (Value, bool, Strin
     }
 
     (chat_body, is_stream, model)
+}
+
+fn chat_response_format_from_text_format(format: &Value) -> Option<Value> {
+    let typ = format.get("type").and_then(Value::as_str)?;
+    match typ {
+        "json_object" => Some(format.clone()),
+        "json_schema" if format.get("json_schema").is_some() => Some(format.clone()),
+        "json_schema" => Some(json!({ "type": "json_object" })),
+        _ => None,
+    }
 }
 
 pub fn build_responses_base_response(
@@ -2158,6 +2187,53 @@ mod tests {
 
         assert_eq!(body["max_output_tokens"], 1000);
         assert!(body.get("max_tokens").is_none());
+    }
+
+    #[test]
+    fn responses_to_chat_downgrades_incomplete_json_schema_format() {
+        let req = json!({
+            "model": "gpt-5.4-mini",
+            "input": "Return JSON",
+            "text": {"format": {"type": "json_schema"}}
+        });
+
+        let (body, _, _) = responses_to_openai_chat_request(&req);
+
+        assert_eq!(body["response_format"], json!({"type": "json_object"}));
+    }
+
+    #[test]
+    fn responses_to_chat_drops_empty_tools_and_tool_controls() {
+        let req = json!({
+            "model": "gpt-5.4-mini",
+            "input": "Hi",
+            "tools": [],
+            "tool_choice": "auto",
+            "parallel_tool_calls": true,
+            "max_tool_calls": 1
+        });
+
+        let (body, _, _) = responses_to_openai_chat_request(&req);
+
+        assert!(body.get("tools").is_none());
+        assert!(body.get("tool_choice").is_none());
+        assert!(body.get("parallel_tool_calls").is_none());
+        assert!(body.get("max_tool_calls").is_none());
+    }
+
+    #[test]
+    fn responses_to_chat_drops_hosted_tools_instead_of_catch_all_passthrough() {
+        let req = json!({
+            "model": "gpt-5.4-mini",
+            "input": "Search web",
+            "tools": [{"type": "web_search_preview"}],
+            "tool_choice": "auto"
+        });
+
+        let (body, _, _) = responses_to_openai_chat_request(&req);
+
+        assert!(body.get("tools").is_none());
+        assert!(body.get("tool_choice").is_none());
     }
 
     #[test]
