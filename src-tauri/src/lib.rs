@@ -1,15 +1,15 @@
 mod admin;
 mod backup;
 mod commands;
-mod database;
 mod data_dir;
+mod database;
 pub(crate) mod embedded_pool;
 mod error;
 mod event;
-mod state_version;
 mod proxy;
 mod runtime_mode;
 mod services;
+mod state_version;
 
 use admin::AdminServer;
 use database::{AppSettings, Database};
@@ -280,6 +280,7 @@ fn run_gui(runtime_mode: RuntimeMode) {
         commands::usage::get_model_ranking,
         commands::usage::get_user_ranking,
         commands::usage::get_user_trend,
+        commands::usage::clear_log_details,
         commands::config::get_settings,
         commands::channel::save_channel_with_models,
         commands::config::update_settings,
@@ -501,7 +502,6 @@ fn run_headless() {
             translation_relay: Arc::new(RwLock::new(None)),
             failure_counts: Arc::new(RwLock::new(HashMap::new())),
             runtime_mode: RuntimeMode::Standalone,
-        
         };
 
         // 鍚姩杞彂锛坅pp_handle = None锛?
@@ -563,3 +563,4 @@ fn run_headless() {
         }
     });
 }
+

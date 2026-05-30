@@ -291,7 +291,11 @@
       "today": "今日",
       "sevenDays": "7天",
       "thirtyDays": "30天"
-    }
+    },
+    "clearData": "清理数据",
+    "clearConfirm": "确认清空所有日志的详细数据（other/content/error_message）并收缩数据库？此操作不可恢复。",
+    "clearDone": "已清理 {{count}} 条日志的详细数据",
+    "clearFailed": "清理失败"
   },
   "dashboard": {
     "title": "数据看板",

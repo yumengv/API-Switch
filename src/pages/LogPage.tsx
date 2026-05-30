@@ -3,6 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Card, CardContent } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
+import { Button } from "@/components/ui/button";
+import { toast } from 'sonner';
 import { useApiAdapter } from "@/lib/useApiAdapter";
 import { useDirtyPolling } from "../lib/useDirtyPolling";
 import type { UsageLogFilter } from "@/types";
@@ -145,15 +147,22 @@ export function LogPage() {
     }));
   };
 
+  const handleClearDetails = async () => {
+    if (!window.confirm(t("log.clearConfirm"))) return;
+    try {
+      const count = await api.usage.clearLogDetails();
+      toast.success(t("log.clearDone", { count }));
+    } catch (e) {
+      console.error("clearLogDetails failed:", e);
+      toast.error(t("log.clearFailed"));
+    }
+  };
+
   return (
     <div className="p-6">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-xl font-semibold">{t("log.title")}</h1>
-        <div className="flex items-center gap-2 text-sm">
-          <span className="text-muted-foreground">{t("log.all")}</span>
-          <Switch checked={errorsOnly} onCheckedChange={toggleErrorsOnly} />
-          <span className="text-muted-foreground">{t("log.failed")}</span>
-        </div>
+        <Button variant="destructive" onClick={handleClearDetails}>{t("log.clearData")}</Button>
       </div>
 
       <div className="grid gap-4 md:grid-cols-4 mb-4">
@@ -204,7 +213,7 @@ export function LogPage() {
               <th className="px-3 py-2 text-left font-medium whitespace-nowrap">{t("log.duration")}</th>
               <th className="px-3 py-2 text-right font-medium">{t("log.promptTokens")}</th>
               <th className="px-3 py-2 text-right font-medium">{t("log.completionTokens")}</th>
-              <th className="px-3 py-2 text-left font-medium whitespace-nowrap">{t("log.status")}</th>
+              <th className="px-3 py-2 text-left font-medium whitespace-nowrap"><div className="flex items-center gap-1"><span>{t("log.all")}</span><Switch checked={errorsOnly} onCheckedChange={toggleErrorsOnly} /><span>{t("log.failed")}</span></div></th>
             </tr>
           </thead>
           <tbody>
@@ -273,3 +282,5 @@ export function LogPage() {
     </div>
   );
 }
+
+

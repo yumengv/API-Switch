@@ -576,6 +576,16 @@ impl Database {
 
         Ok(data)
     }
+
+    pub fn clear_log_details(&self) -> Result<u64, AppError> {
+        let conn = lock_conn!(self.conn);
+        let updated = conn.execute(
+            "UPDATE usage_logs SET other = '', content = '', error_message = NULL",
+            [],
+        )?;
+        conn.execute_batch("VACUUM")?;
+        Ok(updated as u64)
+    }
 }
 
 fn time_bucket_expr(granularity: Option<&str>) -> &'static str {
@@ -584,3 +594,4 @@ fn time_bucket_expr(granularity: Option<&str>) -> &'static str {
         _ => "date(created_at, 'unixepoch', 'localtime')",
     }
 }
+

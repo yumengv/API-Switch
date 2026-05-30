@@ -1,4 +1,4 @@
-﻿export interface ApiAdapter {
+export interface ApiAdapter {
   channels: {
     list(): Promise<Channel[]>;
     listPaginated(params: { page: number; pageSize: number }): Promise<PaginatedResult<Channel>>;
@@ -21,6 +21,7 @@
     getCallTrend(filter?: DashboardFilter): Promise<ChartDataPoint[]>;
     getModelDistribution(filter?: DashboardFilter): Promise<ModelRanking[]>;
     getUserTrend(filter?: DashboardFilter): Promise<ChartDataPoint[]>;
+    clearLogDetails(): Promise<number>;
   };
   pool: {
     list(): Promise<ApiEntry[]>;
@@ -78,5 +79,6 @@ settings: {
 
 import type { Channel, CreateChannelParams, UpdateChannelParams, FetchModelsResult, ProbeResult, TestChannelResult, TestChannelDirectParams, ModelInfo, ModelCatalogMetaUpdate, SaveChannelWithModelsParams, SaveChannelWithModelsResult } from '../features/channels/types';
 import type { DashboardFilter, DashboardStats, ChartDataPoint, ModelRanking, UsageLog, UsageLogFilter, PaginatedResult, ApiEntry, AccessKey, AppSettings, ProxyStatus, AdminStatus, TestChatResponse, TranslationRelayPayload, TranslationRelayRequest, ConnectionAppItem, AppConfigResult } from '../types';
+
 
 

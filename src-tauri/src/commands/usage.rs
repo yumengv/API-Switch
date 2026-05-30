@@ -105,3 +105,9 @@ fn parse_filter(
         None => (None, None, None),
     }
 }
+
+#[cfg(feature = "gui")]
+#[tauri::command]
+pub fn clear_log_details(state: State<'_, AppState>) -> Result<u64, AppError> {
+    log_service::clear_log_details(&state.db)
+}

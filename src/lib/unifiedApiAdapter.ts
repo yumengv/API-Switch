@@ -303,6 +303,11 @@ export const apiAdapter: ApiAdapter = {
       useTauri()
         ? tauriCmd<ChartDataPoint[]>('get_user_trend', { filter })
         : webRequest<ChartDataPoint[]>('GET', '/dashboard/user-trend', undefined, filter as Record<string, unknown>),
+
+    clearLogDetails: () =>
+      useTauri()
+        ? tauriCmd<number>('clear_log_details')
+        : webRequest<number>('POST', '/logs/clear-details'),
   },
 
   pool: {
@@ -573,4 +578,5 @@ export const apiAdapter: ApiAdapter = {
 
 // Type import for translation relay response shape used only in the web path
 import type { TranslationRelayResponse } from '../types';
+
 

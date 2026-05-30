@@ -291,7 +291,11 @@
       "today": "Today",
       "sevenDays": "7 Days",
       "thirtyDays": "30 Days"
-    }
+    },
+    "clearData": "Clear Data",
+    "clearConfirm": "Confirm clearing all log details (other/content/error_message) and vacuum database? This action cannot be undone.",
+    "clearDone": "Cleared details from {{count}} log entries",
+    "clearFailed": "Clear failed"
   },
   "dashboard": {
     "title": "Dashboard",

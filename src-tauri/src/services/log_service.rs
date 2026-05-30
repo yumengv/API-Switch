@@ -21,7 +21,6 @@ pub struct TestUsageLogInput<'a> {
     pub error_preview: Option<&'a str>,
 }
 
-
 /// 记录测试对话和测速产生的真实消耗。
 ///
 /// 只记录元数据、耗时和 token 用量，不记录 API Key、用户提示词、请求体或模型回复。
@@ -49,7 +48,6 @@ pub fn insert_test_usage_log(
         "error_kind": input.error_kind,
         "error_preview": input.error_preview,
     });
-
 
     if let Err(e) = db.insert_usage_log(
         log_type,
@@ -172,4 +170,9 @@ pub fn get_user_trend(
     granularity: Option<&str>,
 ) -> Result<Vec<ChartDataPoint>, AppError> {
     db.get_user_trend(start_time, end_time, granularity)
+}
+
+/// Clear log details (other, content, error_message) and vacuum
+pub fn clear_log_details(db: &Database) -> Result<u64, AppError> {
+    db.clear_log_details()
 }
