@@ -89,6 +89,28 @@ fn chat_sse_completed(finish_reason: &str, input_tokens: i64, output_tokens: i64
     .unwrap_or_default()
 }
 
+/// 把 Responses 失败事件转为 Chat/OpenAI 客户端能识别的错误包络。
+fn chat_sse_error(error: Option<&Value>) -> String {
+    let message = error
+        .and_then(|e| e.get("message"))
+        .and_then(Value::as_str)
+        .unwrap_or("Responses stream failed");
+    let error_type = error
+        .and_then(|e| e.get("type"))
+        .and_then(Value::as_str)
+        .unwrap_or("responses_error");
+    let code = error.and_then(|e| e.get("code")).cloned().unwrap_or(Value::Null);
+
+    serde_json::to_string(&json!({
+        "error": {
+            "message": message,
+            "type": error_type,
+            "code": code
+        }
+    }))
+    .unwrap_or_default()
+}
+
 pub fn responses_function_call_done_event(
     response_id: &str,
     item_id: &str,
@@ -1582,15 +1604,20 @@ impl ProtocolAdapter for ResponsesAdapter {
                 ))
             }
 
-            // ── 无 Chat SSE 对应的事件 ────────────────────────────────
-            //
-            // 按公理二（往返无损）和 ENABLE_UNKNOWN_FIELD_PASSTHROUGH 模式：
-            // 没有 Chat 对应的事件也原样透传，不丢失上游信息。
-            "response.created"
-            | "response.output_item.done"
-            | "response.incomplete"
-            | "response.failed"
-            | _ => Some(data_line.to_string()),
+            // ── 失败事件 ────────────────────────────────────────────
+            "response.failed" => Some(chat_sse_error(
+                value
+                    .pointer("/response/error")
+                    .or_else(|| value.get("error")),
+            )),
+
+            // ── 无 Chat SSE 对应的 Responses 事件 ────────────────────
+            // Responses 生命周期/状态事件不能原样透传给 Chat 下游；否则下游
+            // 只接受 choices/error 包络的 OpenAI 客户端会把合法上游事件判成坏包。
+            event if event.starts_with("response.") => None,
+
+            // 非 Responses 的 JSON SSE（例如上游已经给出的 Chat 风格错误）保留。
+            _ => Some(data_line.to_string()),
         }
     }
 
@@ -2546,6 +2573,66 @@ mod tests {
         a.transform_response(&mut body);
 
         assert_eq!(body["choices"][0]["finish_reason"], "max_output_tokens");
+    }
+
+    #[test]
+    fn responses_sse_lifecycle_events_do_not_leak_to_chat_stream() {
+        let a = ResponsesAdapter;
+
+        for event in [
+            json!({"type": "response.created", "response": {"id": "resp_1", "status": "in_progress"}}),
+            json!({"type": "response.in_progress", "response": {"id": "resp_1", "status": "in_progress"}}),
+            json!({"type": "response.content_part.added", "item_id": "msg_1", "content_index": 0}),
+            json!({"type": "response.output_text.done", "item_id": "msg_1", "text": "done"}),
+            json!({"type": "response.content_part.done", "item_id": "msg_1", "content_index": 0}),
+        ] {
+            let line = serde_json::to_string(&event).unwrap();
+            assert_eq!(a.transform_sse_line(&line), None);
+        }
+    }
+
+    #[test]
+    fn responses_sse_text_delta_still_maps_to_chat_choices() {
+        let a = ResponsesAdapter;
+        let line = serde_json::to_string(&json!({
+            "type": "response.output_text.delta",
+            "item_id": "msg_1",
+            "output_index": 0,
+            "content_index": 0,
+            "delta": "hello"
+        }))
+        .unwrap();
+
+        let transformed = a.transform_sse_line(&line).unwrap();
+        let value: Value = serde_json::from_str(&transformed).unwrap();
+
+        assert_eq!(value["choices"][0]["delta"]["content"], "hello");
+    }
+
+    #[test]
+    fn responses_sse_failed_maps_to_chat_error_envelope() {
+        let a = ResponsesAdapter;
+        let line = serde_json::to_string(&json!({
+            "type": "response.failed",
+            "response": {
+                "id": "resp_1",
+                "status": "failed",
+                "error": {
+                    "message": "upstream failed",
+                    "type": "server_error",
+                    "code": "boom"
+                }
+            }
+        }))
+        .unwrap();
+
+        let transformed = a.transform_sse_line(&line).unwrap();
+        let value: Value = serde_json::from_str(&transformed).unwrap();
+
+        assert!(value.get("choices").is_none());
+        assert_eq!(value["error"]["message"], "upstream failed");
+        assert_eq!(value["error"]["type"], "server_error");
+        assert_eq!(value["error"]["code"], "boom");
     }
 }
 

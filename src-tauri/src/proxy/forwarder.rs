@@ -1265,6 +1265,7 @@ fn build_streaming_response(
                             &adapter,
                             &prompt_tokens,
                             &completion_tokens,
+                            &has_sse_error,
                             &has_text_delta,
                             &has_tool_calls,
                             append_model_info.then_some(entry.model.as_str()),
@@ -1889,6 +1890,7 @@ fn transform_sse_chunk(
     adapter: &Box<dyn super::protocol::ProtocolAdapter + Send + Sync>,
     prompt_tokens: &Arc<AtomicI64>,
     completion_tokens: &Arc<AtomicI64>,
+    has_sse_error: &Arc<AtomicBool>,
     has_text_delta: &Arc<AtomicBool>,
     has_tool_calls: &Arc<AtomicBool>,
     model_info: Option<&str>,
@@ -1946,6 +1948,11 @@ fn transform_sse_chunk(
                     }
                     if stream_chunk_has_tool_calls(&value) {
                         has_tool_calls.store(true, Ordering::Relaxed);
+                    }
+                    if let Some(err) = value.get("error") {
+                        if !err.is_null() {
+                            has_sse_error.store(true, Ordering::Relaxed);
+                        }
                     }
                     if let Some(model) = model_info {
                         if stream_chunk_has_model_info_delta(&value, model) {
@@ -2525,6 +2532,7 @@ data: [DONE]\n"
             &completion_tokens,
             &Arc::new(AtomicBool::new(false)),
             &Arc::new(AtomicBool::new(false)),
+            &Arc::new(AtomicBool::new(false)),
             None,
             &mut SseDoneState::default(),
         )
@@ -2786,6 +2794,7 @@ data: [DONE]\n"
             &adapter,
             &prompt_tokens,
             &completion_tokens,
+            &Arc::new(AtomicBool::new(false)),
             &has_text_delta,
             &Arc::new(AtomicBool::new(false)),
             Some("claude-3"),
@@ -2820,6 +2829,7 @@ data: [DONE]\n",
             &adapter,
             &prompt_tokens,
             &completion_tokens,
+            &Arc::new(AtomicBool::new(false)),
             &has_text_delta,
             &Arc::new(AtomicBool::new(false)),
             Some("gpt-test"),
@@ -2986,6 +2996,7 @@ data: [DONE]\n",
             &adapter,
             &prompt_tokens,
             &completion_tokens,
+            &Arc::new(AtomicBool::new(false)),
             &has_text_delta,
             &has_tool_calls,
             None,
@@ -2997,6 +3008,48 @@ data: [DONE]\n",
         assert!(output.contains("\"reasoning_details\":\"hidden\""));
         assert!(output.contains("\"reasoning_content\":\"hidden\""));
         assert!(output.contains("\"reasoning_text\":\"hidden\""));
+    }
+
+    #[test]
+    fn transform_sse_chunk_marks_responses_failed_as_sse_error() {
+        let adapter = get_adapter("responses");
+        let chunk = Bytes::from_static(
+            b"data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"message\":\"boom\",\"type\":\"server_error\"}}}\n",
+        );
+        let mut buffer = String::new();
+        let mut remainder = Vec::new();
+        let prompt_tokens = Arc::new(AtomicI64::new(0));
+        let completion_tokens = Arc::new(AtomicI64::new(0));
+        let has_sse_error = Arc::new(AtomicBool::new(false));
+        let has_text_delta = Arc::new(AtomicBool::new(false));
+        let has_tool_calls = Arc::new(AtomicBool::new(false));
+        let mut done_state = SseDoneState::default();
+
+        let output = transform_sse_chunk(
+            &chunk,
+            &mut buffer,
+            &mut remainder,
+            &adapter,
+            &prompt_tokens,
+            &completion_tokens,
+            &has_sse_error,
+            &has_text_delta,
+            &has_tool_calls,
+            None,
+            &mut done_state,
+        )
+        .expect("transformed error output");
+        let output = String::from_utf8(output.to_vec()).expect("valid utf8");
+
+        assert!(output.contains("\"error\""));
+        assert!(has_sse_error.load(Ordering::Relaxed));
+        assert!(!is_completed_stream_success(
+            200,
+            has_sse_error.load(Ordering::Relaxed),
+            true,
+            false,
+            1
+        ));
     }
 
     #[test]
@@ -3336,6 +3389,7 @@ data: [DONE]\n"
             &adapter,
             &prompt_tokens,
             &completion_tokens,
+            &Arc::new(AtomicBool::new(false)),
             &has_text_delta,
             &has_tool_calls,
             Some("claude-3"),
