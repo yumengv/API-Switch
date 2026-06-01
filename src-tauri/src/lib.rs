@@ -285,6 +285,9 @@ fn run_gui(runtime_mode: RuntimeMode) {
         commands::channel::save_channel_with_models,
         commands::config::update_settings,
         commands::config::patch_settings,
+        commands::import_export::export_channel_model_transfer,
+        commands::import_export::preview_channel_model_transfer,
+        commands::import_export::import_channel_model_transfer,
         commands::config::check_update,
         commands::connection_apps::list_connection_apps,
         commands::connection_apps::execute_connection_app,
@@ -564,4 +567,3 @@ fn run_headless() {
         }
     });
 }
-

@@ -7,6 +7,8 @@ pub mod connection_apps;
 #[cfg(feature = "gui")]
 pub mod dirty_cmds;
 #[cfg(feature = "gui")]
+pub mod import_export;
+#[cfg(feature = "gui")]
 pub mod limit;
 #[cfg(feature = "gui")]
 pub mod pool;

@@ -4,6 +4,7 @@ use crate::admin::chat_handlers;
 use crate::admin::connection_apps_handlers;
 use crate::admin::cors::apply_admin_cors;
 use crate::admin::handlers;
+use crate::admin::import_export_handlers;
 use crate::admin::pool_handlers;
 use crate::admin::proxy_handlers;
 use crate::admin::state::AdminState;
@@ -67,6 +68,18 @@ pub fn build_admin_router(state: AdminState) -> Router {
         .route(
             "/admin/channels/:id/test",
             post(channel_handlers::test_channel),
+        )
+        .route(
+            "/admin/import-export/channel-model/export",
+            get(import_export_handlers::export_channel_model_transfer),
+        )
+        .route(
+            "/admin/import-export/channel-model/preview",
+            post(import_export_handlers::preview_channel_model_transfer),
+        )
+        .route(
+            "/admin/import-export/channel-model/import",
+            post(import_export_handlers::import_channel_model_transfer),
         )
         .route(
             "/admin/channels/test-direct",

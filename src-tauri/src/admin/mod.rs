@@ -5,6 +5,7 @@ mod connection_apps_handlers;
 mod cors;
 mod error;
 mod handlers;
+mod import_export_handlers;
 mod pool_handlers;
 mod proxy_handlers;
 mod router;
