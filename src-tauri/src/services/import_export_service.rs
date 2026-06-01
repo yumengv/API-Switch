@@ -60,7 +60,6 @@ pub struct TransferModel {
     pub display_name: String,
     pub group_name: String,
     pub enabled: bool,
-    #[serde(rename = "priority")]
     pub sort_index: i32,
     #[serde(default)]
     pub provider_logo: String,
@@ -343,7 +342,7 @@ mod tests {
                 "display_name": "GPT 4.1",
                 "group_name": "auto",
                 "enabled": true,
-                "priority": 7,
+                "sort_index": 7,
                 "provider_logo": "openai",
                 "release_date": "2025-04-14",
                 "model_meta_zh": "中文说明",
@@ -391,7 +390,7 @@ mod tests {
     #[test]
     fn validate_rejects_empty_channel_list_before_delete() {
         let payload = valid_payload().replace(
-            "[{\n              \"name\": \"OpenAI\",\n              \"api_type\": \"openai\",\n              \"base_url\": \"https://api.openai.com\",\n              \"api_key\": \"sk-test\",\n              \"enabled\": true,\n              \"notes\": \"主渠道\",\n              \"available_models\": [{ \"id\": \"gpt-4.1\", \"name\": \"gpt-4.1\", \"owned_by\": \"openai\" }],\n              \"selected_models\": [\"gpt-4.1\"],\n              \"models\": [{\n                \"model\": \"gpt-4.1\",\n                \"display_name\": \"GPT 4.1\",\n                \"group_name\": \"auto\",\n                \"enabled\": true,\n                \"priority\": 7,\n                \"provider_logo\": \"openai\",\n                \"release_date\": \"2025-04-14\",\n                \"model_meta_zh\": \"中文说明\",\n                \"model_meta_en\": \"English description\",\n                \"score\": 12.5\n              }]\n            }]",
+            "[{\n              \"name\": \"OpenAI\",\n              \"api_type\": \"openai\",\n              \"base_url\": \"https://api.openai.com\",\n              \"api_key\": \"sk-test\",\n              \"enabled\": true,\n              \"notes\": \"主渠道\",\n              \"available_models\": [{ \"id\": \"gpt-4.1\", \"name\": \"gpt-4.1\", \"owned_by\": \"openai\" }],\n              \"selected_models\": [\"gpt-4.1\"],\n              \"models\": [{\n                \"model\": \"gpt-4.1\",\n                \"display_name\": \"GPT 4.1\",\n                \"group_name\": \"auto\",\n                \"enabled\": true,\n                \"sort_index\": 7,\n                \"provider_logo\": \"openai\",\n                \"release_date\": \"2025-04-14\",\n                \"model_meta_zh\": \"中文说明\",\n                \"model_meta_en\": \"English description\",\n                \"score\": 12.5\n              }]\n            }]",
             "[]",
         );
 
@@ -404,7 +403,7 @@ mod tests {
     fn validate_rejects_duplicate_models_in_same_channel() {
         let payload = valid_payload().replace(
             "]\n            }]\n          }",
-            ", {\n                \"model\": \"gpt-4.1\",\n                \"display_name\": \"Duplicate\",\n                \"group_name\": \"auto\",\n                \"enabled\": true,\n                \"priority\": 8\n              }]\n            }]\n          }",
+            ", {\n                \"model\": \"gpt-4.1\",\n                \"display_name\": \"Duplicate\",\n                \"group_name\": \"auto\",\n                \"enabled\": true,\n                \"sort_index\": 8\n              }]\n            }]\n          }",
         );
 
         let error = validate_transfer_payload(&payload).expect_err("同一渠道内重复模型必须拒绝");
@@ -475,7 +474,7 @@ mod tests {
         assert!(json.contains("api-switch-channel-model-transfer"));
         assert!(json.contains("sk-test"));
         assert!(json.contains("coding"));
-        assert!(json.contains("\"priority\": 7"));
+        assert!(json.contains("\"sort_index\": 7"));
         assert!(!json.contains("source-channel-id"));
         assert!(!json.contains("source-entry-id"));
         assert!(!json.contains("cooldown_until"));
