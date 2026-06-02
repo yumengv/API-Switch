@@ -53,10 +53,57 @@ function isTauriRuntime(): boolean {
 /**
  * Call a Tauri command via IPC. Dynamic import ensures the
  * @tauri-apps/api/core module is never bundled in web builds.
+ *
+ * 后端 AppError 序列化为字符串后随 invoke reject 传递（结构化 code 已在传递链中丢失），
+ * 此处基于 message 文本做兜底分类，让前端 `getChannelErrorMessage` 能按 kind 输出精确提示。
  */
 async function tauriCmd<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const { invoke } = await import('@tauri-apps/api/core');
-  return invoke<T>(cmd, args ?? {});
+  try {
+    return await invoke<T>(cmd, args ?? {});
+  } catch (cause) {
+    const rawMessage = cause instanceof Error ? cause.message : String(cause);
+    const code = classifyTauriErrorMessage(rawMessage);
+    const syntheticError: ChannelOperationError = { code, message: rawMessage };
+    throw createHttpError(0, rawMessage, syntheticError);
+  }
+}
+
+/**
+ * 基于错误文本兜底分类 invoke reject message。
+ * 后端 fetch_models 路径产生的 message 形如：
+ *   "Network error: Invalid credentials: HTTP 401"
+ *   "Network error: Endpoint unreachable: ..."
+ *   "Network error: Endpoint timeout: ..."
+ *   "Network error: Rate limited: HTTP 429"
+ *   "Network error: Provider returned unsupported response: HTTP 500"
+ *
+ * 实现要点：先剥掉 AppError 包装层（"Network error: " / "Database error: " 等），
+ * 再对内层 message 做精确匹配，避免被包装前缀里的 "network" 误判。
+ */
+function classifyTauriErrorMessage(raw: string): string {
+  const stripped = raw.replace(/^(?:Database|Network|Not found|Validation|Proxy|Internal) error: /i, '');
+  const m = stripped.toLowerCase();
+  // 鉴权失败：必须先判断（401/403 文本里可能含 "connection"）
+  if (m.includes('invalid credentials') || /\bhttp\s*(401|403)\b/.test(m) || m.includes('unauthorized') || m.includes('forbidden')) {
+    return 'INVALID_CREDENTIALS';
+  }
+  if (m.includes('rate limit') || /\bhttp\s*429\b/.test(m) || m.includes('too many requests')) {
+    return 'RATE_LIMITED';
+  }
+  if (m.includes('timeout') || m.includes('timed out') || m.includes('timed_out')) {
+    return 'TIMEOUT';
+  }
+  if (m.includes('empty model list') || m.includes('empty list')) {
+    return 'EMPTY_MODEL_LIST';
+  }
+  if (m.includes('unsupported response') || m.includes('parse error') || m.includes('endpoint correction failed')) {
+    return 'UNSUPPORTED_PROVIDER';
+  }
+  if (m.includes('unreachable') || m.includes('connection refused') || m.includes('connection reset') || m.includes('dns') || m.includes('connect error')) {
+    return 'ENDPOINT_UNREACHABLE';
+  }
+  return 'UNKNOWN';
 }
 
 // ------------------------------------------------------------------
