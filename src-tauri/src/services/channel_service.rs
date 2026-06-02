@@ -1,6 +1,6 @@
 use crate::admin::{
     ERROR_CODE_EMPTY_MODEL_LIST, ERROR_CODE_ENDPOINT_CORRECTION_FAILED,
-    ERROR_CODE_ENDPOINT_UNREACHABLE, ERROR_CODE_ENDPOINT_VALIDATION_FAILED,
+    ERROR_CODE_ENDPOINT_UNREACHABLE,
     ERROR_CODE_FETCH_MODELS_FAILED, ERROR_CODE_HTTP_CLIENT_ERROR, ERROR_CODE_INVALID_CREDENTIALS,
     ERROR_CODE_INVALID_URL, ERROR_CODE_RATE_LIMITED, ERROR_CODE_TIMEOUT,
     ERROR_CODE_UNSUPPORTED_PROVIDER,
@@ -86,10 +86,34 @@ impl ModelsEndpointError {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct EndpointGuess {
     detected_type: String,
     corrected_base_url: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EndpointCandidateScope {
+    UserUrl,
+    BaseSite,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EndpointCandidateStatus {
+    Usable,
+    Reachable,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct EndpointCandidate {
+    guess: EndpointGuess,
+    scope: EndpointCandidateScope,
+    status: EndpointCandidateStatus,
+}
+
+struct ScopedBaseUrlCandidates {
+    user_urls: Vec<String>,
+    base_sites: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -140,14 +164,6 @@ impl ChannelOperationError {
     fn with_details(mut self, details: serde_json::Value) -> Self {
         self.details = Some(details);
         self
-    }
-
-    fn endpoint_validation_failed(message: impl Into<String>) -> Self {
-        Self {
-            code: ERROR_CODE_ENDPOINT_VALIDATION_FAILED.into(),
-            message: message.into(),
-            details: None,
-        }
     }
 }
 
@@ -576,106 +592,29 @@ async fn detect_endpoint_guess(
         .build()
         .ok()?;
 
-    let original_url = normalize_base_url(&base_url);
-    let base_site = extract_base_site(&original_url).unwrap_or_else(|| original_url.clone());
-
-    let phase1_base_url = if api_type == "custom" {
-        &original_url
-    } else {
-        &base_site
-    };
-    match detect_type_with_base_url(&client, api_type, phase1_base_url, api_key, true).await {
-        DetectionResult::Found(guess) => return Some(guess),
-        DetectionResult::Blocked(err) => {
-            log::warn!(
-                "[detect_endpoint] Stop after selected type failed with blocking error: {}",
-                err.message()
-            );
-            return None;
-        }
-        DetectionResult::NotFound => {}
-    }
-
-    for current_type in ["openai", "responses", "anthropic", "gemini", "azure"] {
-        let candidate_base_url = if current_type == "custom" {
-            &original_url
-        } else {
-            &base_site
-        };
-        match detect_type_with_base_url(&client, current_type, candidate_base_url, api_key, false)
-            .await
-        {
-            DetectionResult::Found(guess) => return Some(guess),
-            DetectionResult::Blocked(err) => {
-                log::warn!(
-                    "[detect_endpoint] Stop correction flow after blocking error: {}",
-                    err.message()
-                );
-                return None;
-            }
-            DetectionResult::NotFound => {}
-        }
-    }
-
-    None
+    let candidates = detect_endpoint_candidates(&client, api_type, base_url, api_key).await;
+    select_preferred_endpoint_candidate(&candidates).map(|candidate| candidate.guess)
 }
 
-enum DetectionResult {
-    Found(EndpointGuess),
-    NotFound,
-    Blocked(ModelsEndpointError),
-}
-
-async fn detect_type_with_base_url(
-    client: &reqwest::Client,
+async fn detect_endpoint_and_collect(
     api_type: &str,
     base_url: &str,
     api_key: &str,
-    respect_selected_type: bool,
-) -> DetectionResult {
-    let adapter = get_adapter(api_type);
-    let urls = build_models_url_variants_for_type(api_type, adapter.as_ref(), base_url, api_key);
-    for url in &urls {
-        match try_models_endpoint(client, adapter.as_ref(), url, api_key).await {
-            Ok(models) => {
-                if !models.is_empty() {
-                    if !is_authoritative_detection_success(api_type, url) {
-                        continue;
-                    }
-                    let corrected_base_url =
-                        canonical_base_url_for_success(api_type, base_url, url);
-                    let detected_type = if respect_selected_type {
-                        api_type.to_string()
-                    } else {
-                        resolve_detected_type(api_type, &corrected_base_url)
-                    };
-                    log::info!("[detect_endpoint] OK via {url}, type={detected_type}, base_url={corrected_base_url}");
-                    return DetectionResult::Found(EndpointGuess {
-                        detected_type,
-                        corrected_base_url,
-                    });
-                }
-            }
-            Err(ModelsEndpointError::Auth(status)) => {
-                // Auth (401/403) means endpoint exists but key is invalid
-                let corrected_base_url = canonical_base_url_for_success(api_type, base_url, url);
-                let detected_type = if respect_selected_type {
-                    api_type.to_string()
-                } else {
-                    resolve_detected_type(api_type, &corrected_base_url)
-                };
-                log::info!("[detect_endpoint] Endpoint exists via {url}, type={detected_type} (auth, HTTP {status})");
-                return DetectionResult::Found(EndpointGuess {
-                    detected_type,
-                    corrected_base_url,
-                });
-            }
-            Err(err) if err.is_blocking() => return DetectionResult::Blocked(err),
-            Err(_) => {}
-        }
-    }
+) -> (Option<EndpointGuess>, Vec<String>) {
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .danger_accept_invalid_certs(true)
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return (None, Vec::new()),
+    };
 
-    DetectionResult::NotFound
+    let candidates = detect_endpoint_candidates(&client, api_type, base_url, api_key).await;
+    let primary_guess = select_preferred_endpoint_candidate(&candidates).map(|candidate| candidate.guess);
+    let all_found_types = collect_reachable_endpoint_types(&candidates);
+
+    (primary_guess, all_found_types)
 }
 
 async fn fetch_models_result_with_fallback(
@@ -744,70 +683,139 @@ async fn fetch_models_result_with_fallback(
     }))
 }
 
-async fn detect_endpoint_and_collect(
+enum DetectionResult {
+    Found(EndpointCandidate),
+    NotFound,
+}
+
+async fn detect_endpoint_candidates(
+    client: &reqwest::Client,
     api_type: &str,
     base_url: &str,
     api_key: &str,
-) -> (Option<EndpointGuess>, Vec<String>) {
-    let client = match reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .danger_accept_invalid_certs(true)
-        .build()
-    {
-        Ok(c) => c,
-        Err(_) => return (None, Vec::new()),
-    };
+) -> Vec<EndpointCandidate> {
+    let scoped_candidates = build_scoped_base_url_candidates(base_url);
+    let api_types = endpoint_probe_api_types(api_type);
+    let selected_api_type = normalize_api_type(api_type);
+    let mut tasks = Vec::new();
 
-    let original_url = normalize_base_url(base_url);
-    let base_site = extract_base_site(&original_url).unwrap_or_else(|| original_url.clone());
-    let mut all_found_types: Vec<String> = Vec::new();
-    let mut primary_guess: Option<EndpointGuess> = None;
+    for scope in [EndpointCandidateScope::UserUrl, EndpointCandidateScope::BaseSite] {
+        let base_urls = match scope {
+            EndpointCandidateScope::UserUrl => &scoped_candidates.user_urls,
+            EndpointCandidateScope::BaseSite => &scoped_candidates.base_sites,
+        };
 
-    let phase1_base_url = if api_type == "custom" {
-        &original_url
-    } else {
-        &base_site
-    };
-    match detect_type_with_base_url(&client, api_type, phase1_base_url, api_key, true).await {
-        DetectionResult::Found(guess) => {
-            let t = guess.detected_type.clone();
-            if !all_found_types.contains(&t) {
-                all_found_types.push(t);
+        for base_url in base_urls {
+            for current_type in &api_types {
+                let current_type = *current_type;
+                let candidate_base_url = base_url.clone();
+                let respect_selected_type = current_type == selected_api_type;
+                tasks.push(async move {
+                    detect_type_with_base_url(
+                        client,
+                        current_type,
+                        &candidate_base_url,
+                        api_key,
+                        respect_selected_type,
+                        scope,
+                    )
+                    .await
+                });
             }
-            primary_guess = Some(guess);
-        }
-        DetectionResult::Blocked(err) => {
-            log::warn!(
-                "[detect_endpoint] Stop after selected type failed with blocking error: {}",
-                err.message()
-            );
-        }
-        DetectionResult::NotFound => {}
-    }
-
-    for current_type in ["openai", "responses", "anthropic", "gemini", "azure"] {
-        if current_type == api_type {
-            continue;
-        }
-        let candidate_base_url = &base_site;
-        match detect_type_with_base_url(&client, current_type, candidate_base_url, api_key, false)
-            .await
-        {
-            DetectionResult::Found(guess) => {
-                let t = guess.detected_type.clone();
-                if !all_found_types.contains(&t) {
-                    all_found_types.push(t);
-                }
-                if primary_guess.is_none() {
-                    primary_guess = Some(guess);
-                }
-            }
-            DetectionResult::Blocked(_) => {}
-            DetectionResult::NotFound => {}
         }
     }
 
-    (primary_guess, all_found_types)
+    futures::future::join_all(tasks)
+        .await
+        .into_iter()
+        .filter_map(|result| match result {
+            DetectionResult::Found(candidate) => Some(candidate),
+            DetectionResult::NotFound => None,
+        })
+        .collect()
+}
+
+fn endpoint_probe_api_types(selected_api_type: &str) -> Vec<&'static str> {
+    let selected = normalize_api_type(selected_api_type);
+    let mut types = vec![selected];
+    for api_type in ["openai", "responses", "anthropic", "gemini", "azure"] {
+        if !types.contains(&api_type) {
+            types.push(api_type);
+        }
+    }
+    types
+}
+
+async fn detect_type_with_base_url(
+    client: &reqwest::Client,
+    api_type: &str,
+    base_url: &str,
+    api_key: &str,
+    respect_selected_type: bool,
+    scope: EndpointCandidateScope,
+) -> DetectionResult {
+    let adapter = get_adapter(api_type);
+    let urls = build_models_url_variants_for_type(api_type, adapter.as_ref(), base_url, api_key);
+    let mut reachable_candidate: Option<EndpointCandidate> = None;
+
+    for url in &urls {
+        match try_models_endpoint(client, adapter.as_ref(), url, api_key).await {
+            Ok(models) => {
+                if !models.is_empty() {
+                    if !is_authoritative_detection_success(api_type, url) {
+                        continue;
+                    }
+                    let corrected_base_url =
+                        canonical_base_url_for_success(api_type, base_url, url);
+                    let detected_type = if respect_selected_type {
+                        api_type.to_string()
+                    } else {
+                        resolve_detected_type(api_type, &corrected_base_url)
+                    };
+                    log::info!(
+                        "[detect_endpoint] OK via {}, type={detected_type}, base_url={corrected_base_url}",
+                        sanitize_url_for_log(url)
+                    );
+                    return DetectionResult::Found(EndpointCandidate {
+                        guess: EndpointGuess {
+                            detected_type,
+                            corrected_base_url,
+                        },
+                        scope,
+                        status: EndpointCandidateStatus::Usable,
+                    });
+                }
+            }
+            Err(ModelsEndpointError::Network(_)) | Err(ModelsEndpointError::Timeout(_)) => {}
+            Err(err) => {
+                if reachable_candidate.is_none() {
+                    let corrected_base_url = canonical_base_url_for_success(api_type, base_url, url);
+                    let detected_type = if respect_selected_type {
+                        api_type.to_string()
+                    } else {
+                        resolve_detected_type(api_type, &corrected_base_url)
+                    };
+                    log::info!(
+                        "[detect_endpoint] Endpoint reachable via {}, type={detected_type} ({})",
+                        sanitize_url_for_log(url),
+                        err.message()
+                    );
+                    reachable_candidate = Some(EndpointCandidate {
+                        guess: EndpointGuess {
+                            detected_type,
+                            corrected_base_url,
+                        },
+                        scope,
+                        status: EndpointCandidateStatus::Reachable,
+                    });
+                }
+            }
+        }
+    }
+
+    reachable_candidate
+        .map(DetectionResult::Found)
+        .unwrap_or(DetectionResult::NotFound)
 }
 
 fn normalize_api_type(api_type: &str) -> &'static str {
@@ -819,6 +827,83 @@ fn normalize_api_type(api_type: &str) -> &'static str {
         "azure" => "azure",
         _ => "openai",
     }
+}
+
+fn select_preferred_endpoint_candidate(candidates: &[EndpointCandidate]) -> Option<EndpointCandidate> {
+    [
+        (EndpointCandidateScope::UserUrl, EndpointCandidateStatus::Usable),
+        (EndpointCandidateScope::UserUrl, EndpointCandidateStatus::Reachable),
+        (EndpointCandidateScope::BaseSite, EndpointCandidateStatus::Usable),
+        (EndpointCandidateScope::BaseSite, EndpointCandidateStatus::Reachable),
+    ]
+    .into_iter()
+    .find_map(|(scope, status)| {
+        candidates
+            .iter()
+            .find(|candidate| candidate.scope == scope && candidate.status == status)
+            .cloned()
+    })
+}
+
+fn collect_reachable_endpoint_types(candidates: &[EndpointCandidate]) -> Vec<String> {
+    let mut types = Vec::new();
+    for candidate in candidates {
+        let detected_type = candidate.guess.detected_type.clone();
+        if !types.contains(&detected_type) {
+            types.push(detected_type);
+        }
+    }
+    types
+}
+
+fn build_scoped_base_url_candidates(base_url: &str) -> ScopedBaseUrlCandidates {
+    let normalized = normalize_base_url(base_url);
+    let base_site = extract_base_site(&normalized).unwrap_or_else(|| normalized.clone());
+
+    ScopedBaseUrlCandidates {
+        user_urls: build_user_url_candidates(&normalized),
+        base_sites: build_site_url_candidates(&base_site),
+    }
+}
+
+fn build_user_url_candidates(base_url: &str) -> Vec<String> {
+    let normalized = normalize_base_url(base_url);
+    let mut candidates = Vec::new();
+    push_unique_url_candidate(&mut candidates, normalized.clone());
+
+    if normalized.to_ascii_lowercase().ends_with("/v1") {
+        let without_v1 = normalized[..normalized.len() - 3].trim_end_matches('/').to_string();
+        push_unique_url_candidate(&mut candidates, without_v1);
+    } else if !normalized.is_empty() {
+        push_unique_url_candidate(&mut candidates, format!("{}/v1", normalized.trim_end_matches('/')));
+    }
+
+    candidates
+}
+
+fn build_site_url_candidates(base_site: &str) -> Vec<String> {
+    let normalized = normalize_base_url(base_site);
+    let mut candidates = Vec::new();
+    push_unique_url_candidate(&mut candidates, normalized.clone());
+
+    if normalized.to_ascii_lowercase().ends_with("/v1") {
+        let without_v1 = normalized[..normalized.len() - 3].trim_end_matches('/').to_string();
+        push_unique_url_candidate(&mut candidates, without_v1);
+    } else if !normalized.is_empty() {
+        push_unique_url_candidate(&mut candidates, format!("{}/v1", normalized.trim_end_matches('/')));
+    }
+
+    candidates
+}
+
+fn push_unique_url_candidate(candidates: &mut Vec<String>, candidate: String) {
+    if !candidate.is_empty() && !candidates.contains(&candidate) {
+        candidates.push(candidate);
+    }
+}
+
+fn sanitize_url_for_log(url: &str) -> String {
+    url.split('?').next().unwrap_or(url).to_string()
 }
 
 fn is_authoritative_detection_success(api_type: &str, success_url: &str) -> bool {
@@ -1357,4 +1442,107 @@ pub fn save_channel_with_models(
         entries_changed: true,
         warnings,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn candidate(
+        scope: EndpointCandidateScope,
+        status: EndpointCandidateStatus,
+        api_type: &str,
+        base_url: &str,
+    ) -> EndpointCandidate {
+        EndpointCandidate {
+            guess: EndpointGuess {
+                detected_type: api_type.to_string(),
+                corrected_base_url: base_url.to_string(),
+            },
+            scope,
+            status,
+        }
+    }
+
+    #[test]
+    fn select_prefers_user_url_reachable_over_base_site_usable() {
+        let candidates = vec![
+            candidate(
+                EndpointCandidateScope::BaseSite,
+                EndpointCandidateStatus::Usable,
+                "openai",
+                "https://a.com/v1",
+            ),
+            candidate(
+                EndpointCandidateScope::UserUrl,
+                EndpointCandidateStatus::Reachable,
+                "openai",
+                "https://a.com/xxx/yyy/v1",
+            ),
+        ];
+
+        let selected = select_preferred_endpoint_candidate(&candidates).expect("应选择可达候选");
+
+        assert_eq!(selected.scope, EndpointCandidateScope::UserUrl);
+        assert_eq!(selected.status, EndpointCandidateStatus::Reachable);
+        assert_eq!(selected.guess.corrected_base_url, "https://a.com/xxx/yyy/v1");
+    }
+
+    #[test]
+    fn build_user_url_candidates_preserves_extended_path_and_v1_variant() {
+        let groups = build_scoped_base_url_candidates("https://a.com/xxx/yyy");
+
+        assert_eq!(
+            groups.user_urls,
+            vec![
+                "https://a.com/xxx/yyy".to_string(),
+                "https://a.com/xxx/yyy/v1".to_string(),
+            ]
+        );
+        assert_eq!(
+            groups.base_sites,
+            vec!["https://a.com".to_string(), "https://a.com/v1".to_string()]
+        );
+    }
+
+    #[test]
+    fn build_user_url_candidates_for_v1_input_also_tries_without_v1() {
+        let groups = build_scoped_base_url_candidates("https://a.com/xxx/yyy/v1");
+
+        assert_eq!(
+            groups.user_urls,
+            vec![
+                "https://a.com/xxx/yyy/v1".to_string(),
+                "https://a.com/xxx/yyy".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn collect_reachable_types_marks_reachable_and_usable_protocols() {
+        let candidates = vec![
+            candidate(
+                EndpointCandidateScope::UserUrl,
+                EndpointCandidateStatus::Reachable,
+                "openai",
+                "https://a.com/xxx/yyy/v1",
+            ),
+            candidate(
+                EndpointCandidateScope::BaseSite,
+                EndpointCandidateStatus::Usable,
+                "anthropic",
+                "https://a.com",
+            ),
+            candidate(
+                EndpointCandidateScope::BaseSite,
+                EndpointCandidateStatus::Usable,
+                "openai",
+                "https://a.com/v1",
+            ),
+        ];
+
+        let types = collect_reachable_endpoint_types(&candidates);
+
+        assert_eq!(types, vec!["openai".to_string(), "anthropic".to_string()]);
+    }
 }

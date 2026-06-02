@@ -377,6 +377,30 @@ Access Key 用于客户端访问代理时的身份识别和可选鉴权。关闭
 - 可用端点校准
 - 响应时间记录
 
+#### 探测候选与优先级
+
+候选 URL 分为两个 Scope，USER URL 与 BASE SITE 同时并发探测：
+
+- **USER URL**：用户输入的原始 URL 及其 `/v1` 变体（输入本身已含 `/v1` 时也尝试去掉）
+- **BASE SITE**：从用户 URL 抽取的站点根（`extract_base_site`）及其 `/v1` 变体
+
+每个候选 URL 按协议（openai / responses / anthropic / gemini / azure）展开，所有 `(scope, base_url, api_type)` 组合通过 `futures::future::join_all` 并发执行。候选结果状态：
+
+- **Usable**：模型列表非空 + 协议权威性校验通过（gemini 须命中 `/v1beta/...`，azure 须命中 `/openai/deployments`）
+- **Reachable**：HTTP 响应存在（401/403/429/4xx/5xx 视为可达；Network/Timeout 显式忽略，不计入可达）
+- **NotFound**：网络层失败或未取得响应
+
+最终候选选择优先级（`select_preferred_endpoint_candidate`）：
+
+1. USER URL Usable
+2. USER URL Reachable
+3. BASE SITE Usable
+4. BASE SITE Reachable
+
+**只要 USER URL 命中任一候选（Usable 或 Reachable），BASE SITE 结果不参与最终选择**。协议绿色标记基于全部 Reachable 候选聚合的 `detected_type`，仅需可达即标绿。全失败时尊重用户输入与选择，不强制纠正。
+
+探测过程日志中 URL 需经 `sanitize_url_for_log` 脱敏（剥离 query），避免在日志中泄露可能附带在 query 里的凭据。
+
 获取模型列表只基于已测速/已确认的节点信息执行，避免“探测 URL”和“拉取模型 URL”各自分叉。
 
 ### 7.2 模型列表拉取
