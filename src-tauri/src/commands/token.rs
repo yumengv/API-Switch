@@ -1,6 +1,7 @@
 use crate::database::dao::PaginatedResult;
 use crate::database::AccessKey;
 use crate::error::AppError;
+use crate::server_api::ServerApi;
 use crate::services::token_service;
 use crate::AppState;
 use tauri::{AppHandle, State};
@@ -20,9 +21,9 @@ pub fn list_access_keys_paginated(
 }
 
 #[tauri::command]
-pub fn create_access_key(state: State<'_, AppState>, name: String) -> Result<AccessKey, AppError> {
-    let key = token_service::create_access_key(&state.db, &name)?;
-    Ok(key)
+pub fn create_access_key(app: AppHandle, state: State<'_, AppState>, name: String) -> Result<AccessKey, AppError> {
+    let api = ServerApi::new(state.inner().clone(), app);
+    api.create_access_key(&name)
 }
 
 #[tauri::command]
@@ -31,8 +32,8 @@ pub async fn delete_access_key(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<(), AppError> {
-    token_service::delete_access_key(&state.db, &id, Some(&app))?;
-    Ok(())
+    let api = ServerApi::new(state.inner().clone(), app);
+    api.delete_access_key(&id)
 }
 
 #[tauri::command]
@@ -42,6 +43,6 @@ pub async fn toggle_access_key(
     id: String,
     enabled: bool,
 ) -> Result<(), AppError> {
-    token_service::toggle_access_key(&state.db, &id, enabled, Some(&app))?;
-    Ok(())
+    let api = ServerApi::new(state.inner().clone(), app);
+    api.toggle_access_key(&id, enabled)
 }

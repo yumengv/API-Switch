@@ -8,6 +8,8 @@ mod error;
 mod event;
 mod proxy;
 mod runtime_mode;
+mod runtime_plan;
+mod server_api;
 mod services;
 mod state_version;
 mod tray_refresh;

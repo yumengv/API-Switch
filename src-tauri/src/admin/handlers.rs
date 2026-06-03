@@ -1,6 +1,7 @@
 use crate::admin::error::AdminError;
 use crate::admin::state::{AdminState, SessionInfo};
 use crate::database::AppSettings;
+use crate::server_api::ServerApi;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::Json;
@@ -8,6 +9,19 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 const SESSION_TTL_MINUTES: i64 = 30;
+
+/// 获取 ServerApi 实例（从 AdminState 中提取 runtime + app_handle）。
+fn server_api(state: &AdminState) -> Result<ServerApi, AdminError> {
+    let runtime = state
+        .runtime
+        .as_ref()
+        .ok_or_else(|| AdminError::Internal("AdminState missing runtime".to_string()))?;
+    let app_handle = state
+        .app_handle
+        .as_ref()
+        .ok_or_else(|| AdminError::Internal("AdminState missing app handle".to_string()))?;
+    Ok(ServerApi::new(runtime.clone(), app_handle.clone()))
+}
 
 pub async fn version() -> axum::Json<serde_json::Value> {
     axum::Json(serde_json::json!({
@@ -225,11 +239,8 @@ pub async fn patch_settings(
         merged.web_admin_password = current.web_admin_password;
     }
 
-    if let (Some(runtime), Some(app_handle)) = (state.runtime.clone(), state.app_handle.clone()) {
-        crate::commands::config::apply_settings_update_with_restart(
-            app_handle, &runtime, merged, true,
-        )
-        .await?;
+    if let Ok(api) = server_api(&state) {
+        api.update_settings(merged).await?;
     } else {
         state.db.update_settings(&merged)?;
         let refreshed = state.db.get_settings()?;
@@ -273,14 +284,10 @@ pub async fn update_settings(
     }
     let session_invalidated = credentials_changed;
 
-    if let (Some(runtime), Some(app_handle)) = (state.runtime.clone(), state.app_handle.clone()) {
-        let restart_info = crate::commands::config::apply_settings_update_with_restart(
-            app_handle,
-            &runtime,
-            payload.data.clone(),
-            true,
-        )
-        .await?;
+    if let Ok(api) = server_api(&state) {
+        let restart_info = api
+            .update_settings_with_restart(payload.data.clone(), true)
+            .await?;
         let refreshed = state.settings.read().await.clone();
         let _ = state.db.add_audit_log(
             "admin_settings_updated",

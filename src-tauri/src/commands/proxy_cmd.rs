@@ -10,10 +10,14 @@ pub fn refresh_tray_menu(app: tauri::AppHandle) -> Result<(), AppError> {
     Ok(())
 }
 
-#[tauri::command]
-pub async fn start_proxy(
+// ---------------------------------------------------------------------------
+// 可复用 helper：不依赖 tauri::State，供 ServerApi 和 admin handler 调用
+// ---------------------------------------------------------------------------
+
+/// 启动代理服务器并绑定 admin router。
+pub async fn start_proxy_from_state(
     app: tauri::AppHandle,
-    state: State<'_, AppState>,
+    state: &AppState,
 ) -> Result<ProxyStatus, AppError> {
     let settings = state.settings.read().await.clone();
     let port = settings.listen_port;
@@ -32,7 +36,7 @@ pub async fn start_proxy(
     );
     let admin_router = crate::admin::build_combined_router(
         &settings,
-        crate::admin::AdminState::new_runtime(state.inner().clone(), app.clone()),
+        crate::admin::AdminState::new_runtime(state.clone(), app.clone()),
     );
     server
         .start_with_admin(admin_router)
@@ -47,15 +51,15 @@ pub async fn start_proxy(
 
     *proxy_guard = Some(server);
 
-    // Update config, then rebuild L1 settings cache from DB.
+    // 更新配置标记，然后从 DB 重建 L1 settings 缓存
     state.db.set_config_value("proxy_enabled", "1")?;
-    refresh_settings_l1(&state).await?;
+    refresh_settings_l1(state).await?;
 
     Ok(status)
 }
 
-#[tauri::command]
-pub async fn stop_proxy(state: State<'_, AppState>) -> Result<(), AppError> {
+/// 停止正在运行的代理服务器。
+pub async fn stop_proxy_from_state(state: &AppState) -> Result<(), AppError> {
     let mut proxy_guard = state.proxy.write().await;
     if let Some(server) = proxy_guard.take() {
         server
@@ -64,12 +68,12 @@ pub async fn stop_proxy(state: State<'_, AppState>) -> Result<(), AppError> {
             .map_err(|e| AppError::Proxy(e.to_string()))?;
     }
     state.db.set_config_value("proxy_enabled", "0")?;
-    refresh_settings_l1(&state).await?;
+    refresh_settings_l1(state).await?;
     Ok(())
 }
 
-#[tauri::command]
-pub async fn get_proxy_status(state: State<'_, AppState>) -> Result<ProxyStatus, AppError> {
+/// 查询代理当前运行状态（不改变任何状态）。
+pub async fn proxy_status_from_state(state: &AppState) -> Result<ProxyStatus, AppError> {
     let proxy_guard = state.proxy.read().await;
     let settings = state.settings.read().await.clone();
 
@@ -81,4 +85,32 @@ pub async fn get_proxy_status(state: State<'_, AppState>) -> Result<ProxyStatus,
             port: settings.listen_port,
         },
     })
+}
+
+// ---------------------------------------------------------------------------
+// Tauri command 薄包装：通过 ServerApi 调用
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn start_proxy(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<ProxyStatus, AppError> {
+    let api = crate::server_api::ServerApi::new(state.inner().clone(), app);
+    api.start_proxy().await
+}
+
+#[tauri::command]
+pub async fn stop_proxy(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), AppError> {
+    let api = crate::server_api::ServerApi::new(state.inner().clone(), app);
+    api.stop_proxy().await
+}
+
+#[tauri::command]
+pub async fn get_proxy_status(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<ProxyStatus, AppError> {
+    let api = crate::server_api::ServerApi::new(state.inner().clone(), app);
+    api.proxy_status().await
 }

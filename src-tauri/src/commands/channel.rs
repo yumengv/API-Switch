@@ -94,8 +94,8 @@ pub fn update_channel(
     state: State<'_, AppState>,
     params: crate::services::channel_service::UpdateChannelParams,
 ) -> Result<Channel, AppError> {
-    let channel = channel_service::update_channel(&state.db, Some(&app), params)?;
-    Ok(channel)
+    let api = crate::server_api::ServerApi::new(state.inner().clone(), app);
+    api.update_channel(params)
 }
 
 #[tauri::command]
@@ -133,16 +133,14 @@ pub async fn create_channel(
     state: State<'_, AppState>,
     params: CreateChannelParams,
 ) -> Result<Channel, AppError> {
-    let channel = channel_service::create_channel(
-        &state.db,
-        channel_service::CreateChannelParams {
-            name: params.name,
-            api_type: params.api_type,
-            base_url: params.base_url,
-            api_key: params.api_key,
-            notes: params.notes,
-        },
-    )?;
+    let api = crate::server_api::ServerApi::new(state.inner().clone(), app.clone());
+    let channel = api.create_channel(channel_service::CreateChannelParams {
+        name: params.name,
+        api_type: params.api_type,
+        base_url: params.base_url,
+        api_key: params.api_key,
+        notes: params.notes,
+    })?;
     let _ = app.emit("channels-changed", ());
     Ok(channel)
 }
@@ -153,8 +151,8 @@ pub async fn delete_channel(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<(), AppError> {
-    channel_service::delete_channel(&state.db, Some(&app), id)?;
-    Ok(())
+    let api = crate::server_api::ServerApi::new(state.inner().clone(), app);
+    api.delete_channel(id)
 }
 
 #[tauri::command]
@@ -497,6 +495,6 @@ pub async fn save_channel_with_models(
     state: State<'_, AppState>,
     params: channel_service::SaveChannelWithModelsParams,
 ) -> Result<channel_service::SaveChannelWithModelsResult, AppError> {
-    let result = channel_service::save_channel_with_models(&state.db, Some(&app), params)?;
-    Ok(result)
+    let api = crate::server_api::ServerApi::new(state.inner().clone(), app);
+    api.save_channel_with_models(params)
 }

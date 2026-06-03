@@ -283,10 +283,45 @@ pub async fn apply_settings_update_with_restart(
     Ok(Some(restart_info))
 }
 
+// ---------------------------------------------------------------------------
+// 可复用 helper：不依赖 tauri::State，供 ServerApi 和 admin handler 调用
+// ---------------------------------------------------------------------------
+
+/// 从内存缓存获取当前设置。
+pub async fn get_settings_from_state(state: &AppState) -> Result<AppSettings, AppError> {
+    Ok(state.settings.read().await.clone())
+}
+
+/// 完整更新设置，触发 proxy/admin 重载等副作用，返回更新后的设置。
+pub async fn update_settings_from_state(
+    app: crate::AppEventHandle,
+    state: &AppState,
+    settings: AppSettings,
+) -> Result<AppSettings, AppError> {
+    apply_settings_update(app, state, settings, false).await?;
+    Ok(state.settings.read().await.clone())
+}
+
+/// 局部补丁更新设置，返回更新后的设置。
+/// 注意：web_admin_password 保护逻辑由调用方（如 tauri 命令）负责。
+pub async fn patch_settings_from_state(
+    app: crate::AppEventHandle,
+    state: &AppState,
+    patch: serde_json::Value,
+) -> Result<AppSettings, AppError> {
+    let current = state.settings.read().await.clone();
+    let merged = merge_settings_patch(&current, &patch)?;
+    update_settings_from_state(app, state, merged).await
+}
+
+// ---------------------------------------------------------------------------
+// Tauri command 薄包装
+// ---------------------------------------------------------------------------
+
 #[cfg(feature = "gui")]
 #[tauri::command]
 pub async fn get_settings(state: State<'_, AppState>) -> Result<AppSettings, AppError> {
-    Ok(state.settings.read().await.clone())
+    get_settings_from_state(state.inner()).await
 }
 
 #[cfg(feature = "gui")]
@@ -296,7 +331,9 @@ pub async fn update_settings(
     state: State<'_, AppState>,
     settings: AppSettings,
 ) -> Result<(), AppError> {
-    apply_settings_update(app, &state, settings, false).await
+    let api = crate::server_api::ServerApi::new(state.inner().clone(), app);
+    api.update_settings(settings).await?;
+    Ok(())
 }
 
 #[cfg(feature = "gui")]
@@ -306,14 +343,15 @@ pub async fn patch_settings(
     state: State<'_, AppState>,
     patch: serde_json::Value,
 ) -> Result<AppSettings, AppError> {
+    // 保留原有 web_admin_password 保护逻辑：空密码时保持原值
     let current = state.settings.read().await.clone();
     let mut merged = merge_settings_patch(&current, &patch)?;
     if merged.web_admin_password.is_empty() {
         merged.web_admin_password = current.web_admin_password;
     }
 
-    apply_settings_update(app, &state, merged, false).await?;
-    Ok(state.settings.read().await.clone())
+    let api = crate::server_api::ServerApi::new(state.inner().clone(), app);
+    api.update_settings(merged).await
 }
 
 #[cfg(test)]
