@@ -2,6 +2,7 @@ use crate::admin::RestartInfo;
 use crate::database::AppSettings;
 use crate::error::AppError;
 use crate::AppState;
+#[cfg(feature = "gui")]
 use serde::Deserialize;
 #[cfg(feature = "gui")]
 use tauri::State;
@@ -122,6 +123,7 @@ pub async fn check_update() -> Result<Option<serde_json::Value>, AppError> {
     })))
 }
 
+#[cfg(feature = "desktop")]
 fn sync_autostart(settings: &AppSettings) {
     let app_name = "API Switch";
     let exe = match std::env::current_exe() {
@@ -164,6 +166,9 @@ pub async fn refresh_settings_l1(state: &AppState) -> Result<AppSettings, AppErr
     *state.settings.write().await = settings.clone();
     Ok(settings)
 }
+
+#[cfg(not(feature = "desktop"))]
+fn sync_autostart(_settings: &AppSettings) {}
 
 pub(crate) fn merge_settings_patch(
     current: &AppSettings,

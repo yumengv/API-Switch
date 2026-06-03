@@ -11,7 +11,47 @@ pub(crate) fn resolve_data_dir() -> Result<PathBuf, AppError> {
 }
 
 pub(crate) fn database_path() -> Result<PathBuf, AppError> {
-    Ok(resolve_data_dir()?.join("api-switch.db"))
+    database_path_in(resolve_data_dir()?)
+}
+
+#[cfg(feature = "gui")]
+pub(crate) fn database_path_from_app(app: &tauri::AppHandle) -> Result<PathBuf, AppError> {
+    #[cfg(mobile)]
+    {
+        return database_path_in(app.path().app_data_dir().map_err(|e| {
+            AppError::Database(format!("Failed to resolve mobile app data dir: {e}"))
+        })?);
+    }
+
+    #[cfg(not(mobile))]
+    {
+        let _ = app;
+        database_path()
+    }
+}
+
+fn database_path_in(dir: PathBuf) -> Result<PathBuf, AppError> {
+    ensure_data_dir(&dir)?;
+    Ok(dir.join("api-switch.db"))
+}
+
+fn ensure_data_dir(dir: &Path) -> Result<(), AppError> {
+    std::fs::create_dir_all(dir).map_err(|e| {
+        AppError::Database(format!(
+            "Failed to create data directory {}: {e}",
+            dir.display()
+        ))
+    })?;
+
+    let probe = dir.join(".api-switch-write-test");
+    std::fs::write(&probe, b"ok").map_err(|e| {
+        AppError::Database(format!(
+            "Data directory is not writable {}: {e}",
+            dir.display()
+        ))
+    })?;
+    let _ = std::fs::remove_file(probe);
+    Ok(())
 }
 
 fn resolve_data_dir_from<I, F>(args: I, current_exe: F) -> Result<PathBuf, AppError>
@@ -86,5 +126,20 @@ mod tests {
         .unwrap();
 
         assert_eq!(dir, PathBuf::from("/opt/api-switch"));
+    }
+
+    #[test]
+    fn database_path_uses_requested_directory() {
+        let dir =
+            std::env::temp_dir().join(format!("api-switch-data-dir-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let path = database_path_in(dir.clone()).unwrap();
+
+        assert_eq!(path, dir.join("api-switch.db"));
+        assert!(dir.exists());
+        assert!(!dir.join(".api-switch-write-test").exists());
+
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

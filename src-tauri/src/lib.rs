@@ -19,10 +19,12 @@ use runtime_mode::{ModeSource, RuntimeMode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-#[cfg(feature = "gui")]
+#[cfg(all(feature = "tray", not(mobile)))]
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
+#[cfg(all(feature = "tray", not(mobile)))]
+use tauri::Emitter;
 #[cfg(feature = "gui")]
-use tauri::{Emitter, Manager};
+use tauri::Manager;
 use tokio::sync::Mutex;
 
 pub use error::AppError;
@@ -53,6 +55,7 @@ pub struct AppState {
     pub runtime_mode: RuntimeMode,
 }
 
+#[cfg(all(feature = "tray", not(mobile)))]
 pub(crate) const TRAY_ID: &str = "api-switch-tray";
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -80,12 +83,15 @@ pub fn run() {
 
 #[cfg(feature = "gui")]
 fn run_gui(runtime_mode: RuntimeMode) {
-    let _app = tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_process::init())
+    let builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
+
+    #[cfg(feature = "desktop")]
+    let builder = builder.plugin(tauri_plugin_process::init());
+
+    let _app = builder
         .setup(move |app| {
             // Initialize database
-            let db = Database::open()?;
+            let db = Database::open_at(data_dir::database_path_from_app(app.handle())?)?;
             db.create_tables()?;
 
             let mut settings_cache = db.get_settings().unwrap_or_default();
@@ -97,18 +103,17 @@ fn run_gui(runtime_mode: RuntimeMode) {
             }
             db.update_settings(&settings_cache)?;
 
-        let state = AppState {
-            db: Arc::new(db),
-            settings: Arc::new(tokio::sync::RwLock::new(settings_cache)),
-            proxy: Arc::new(tokio::sync::RwLock::new(None)),
-            admin: Arc::new(tokio::sync::RwLock::new(None)),
-            translation_relay: Arc::new(tokio::sync::RwLock::new(None)),
-            failure_counts: Arc::new(
-                tokio::sync::RwLock::new(std::collections::HashMap::new()),
-            ),
-            runtime_mode,
-        
-        };
+            let state = AppState {
+                db: Arc::new(db),
+                settings: Arc::new(tokio::sync::RwLock::new(settings_cache)),
+                proxy: Arc::new(tokio::sync::RwLock::new(None)),
+                admin: Arc::new(tokio::sync::RwLock::new(None)),
+                translation_relay: Arc::new(tokio::sync::RwLock::new(None)),
+                failure_counts: Arc::new(
+                    tokio::sync::RwLock::new(std::collections::HashMap::new()),
+                ),
+                runtime_mode,
+            };
             app.manage(state);
 
             // Auto-start proxy if proxy_enabled is set
@@ -153,72 +158,7 @@ fn run_gui(runtime_mode: RuntimeMode) {
                 }
             });
 
-        // Read settings to decide startup behavior
-        let settings = app.state::<AppState>().settings.blocking_read().clone();
-        let runtime_mode = app.state::<AppState>().runtime_mode;
-
-        // Build tray icon and window management (Combined mode only)
-        if runtime_mode == RuntimeMode::Combined {
-            // Build tray icon (ref: cc-switch/src/lib.rs)
-            // If tray build fails, fall back to Standalone behavior (skip tray/window but continue)
-            match build_tray_menu(app.handle()) {
-                Ok(tray_menu) => {
-                    match tauri::tray::TrayIconBuilder::with_id(TRAY_ID)
-                        .icon(app.default_window_icon().cloned().unwrap())
-                        .menu(&tray_menu)
-                        .show_menu_on_left_click(true)
-                        .on_tray_icon_event(|tray, event| match event {
-                            tauri::tray::TrayIconEvent::Click { .. } => {
-                                tray_refresh::mark_tray_interaction();
-                            }
-                            tauri::tray::TrayIconEvent::DoubleClick { .. } => {
-                                tray_refresh::mark_tray_interaction();
-                                if let Some(window) = tray.app_handle().get_webview_window("main") {
-                                    let _ = window.show();
-                                    let _ = window.set_focus();
-                                }
-                            }
-                            _ => {}
-                        })
-                        .on_menu_event(move |app, event| {
-                            tray_refresh::mark_tray_interaction();
-                            handle_tray_menu_event(app, &event.id.0);
-                        })
-                        .build(app)
-                    {
-                        Ok(_tray) => {
-                            log::info!("Tray icon built successfully");
-                            tray_refresh::start_tray_refresh_consumer(app.handle().clone());
-                        }
-                        Err(e) => {
-                            log::warn!("Failed to build tray icon: {e}. Falling back to Standalone behavior (no tray/window).");
-                        }
-                    }
-                }
-                Err(e) => {
-                    log::warn!("Failed to build tray menu: {e}. Falling back to Standalone behavior (no tray/window).");
-                }
-            }
-
-            // Show or keep hidden based on settings (only if tray succeeded)
-            // Note: We still try to show the window even if tray failed, but the window close handler won't work properly
-            if let Some(window) = app.get_webview_window("main") {
-                if !settings.start_minimized {
-                    let _ = window.show();
-                }
-
-                // Intercept window close 鈫?hide to tray instead of exiting
-                let win = window.clone();
-                window.on_window_event(move |event| {
-                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                        api.prevent_close();
-                        let _ = win.hide();
-                    }
-                });
-            }
-        } else {
-            log::info!("Running in Standalone mode - skipping tray and window management");
-        }
+            configure_platform_shell(app);
 
             log::info!("API Switch initialized");
             tauri::async_runtime::spawn(async move {
@@ -226,72 +166,150 @@ fn run_gui(runtime_mode: RuntimeMode) {
             });
             Ok(())
         })
-    .invoke_handler(tauri::generate_handler![
-        commands::channel::list_channels,
-        commands::channel::list_channels_paginated,
-        commands::channel::create_channel,
-        commands::channel::update_channel,
-        commands::channel::update_channel_response_ms,
-        commands::channel::delete_channel,
-        commands::channel::fetch_models,
-        commands::channel::fetch_models_direct,
-        commands::channel::probe_url,
-        commands::channel::test_channel,
-        commands::channel::test_channel_direct,
-        commands::channel::select_models,
-        commands::dirty_cmds::take_dirty,
-        commands::pool::list_entries,
-        commands::pool::list_entries_paginated,
-        commands::pool::toggle_entry,
-        commands::pool::batch_toggle_entries,
-        commands::pool::reorder_entries,
-        commands::pool::delete_entry,
-        commands::pool::create_entry,
-        commands::pool::backfill_entry_catalog_meta,
-        commands::pool::test_entry_latency,
-        commands::pool::update_entry_response_ms,
-        commands::pool::get_all_groups,
-        commands::pool::update_entry_display_name,
-        commands::pool::update_entry_group,
-        commands::token::list_access_keys,
-        commands::token::list_access_keys_paginated,
-        commands::token::create_access_key,
-        commands::token::delete_access_key,
-        commands::token::toggle_access_key,
-        commands::usage::get_usage_logs,
-        commands::usage::get_dashboard_stats,
-        commands::usage::get_model_consumption,
-        commands::usage::get_call_trend,
-        commands::usage::get_model_distribution,
-        commands::usage::get_model_ranking,
-        commands::usage::get_user_ranking,
-        commands::usage::get_user_trend,
-        commands::usage::clear_log_details,
-        commands::config::get_settings,
-        commands::channel::save_channel_with_models,
-        commands::config::update_settings,
-        commands::config::patch_settings,
-        commands::import_export::export_channel_model_transfer,
-        commands::import_export::preview_channel_model_transfer,
-        commands::import_export::import_channel_model_transfer,
-        commands::config::check_update,
-        commands::connection_apps::list_connection_apps,
-        commands::connection_apps::execute_connection_app,
-        commands::proxy_cmd::start_proxy,
-        commands::proxy_cmd::stop_proxy,
-        commands::proxy_cmd::get_proxy_status,
-        commands::proxy_cmd::refresh_tray_menu,
-        commands::test_chat::test_chat,
-        commands::limit::query_limit,
-        commands::admin_cmd::get_admin_status,
-        commands::translation::translate_and_relay,
-        commands::translation::get_translation_relay,
-    ])
+        .invoke_handler(tauri::generate_handler![
+            commands::channel::list_channels,
+            commands::channel::list_channels_paginated,
+            commands::channel::create_channel,
+            commands::channel::update_channel,
+            commands::channel::update_channel_response_ms,
+            commands::channel::delete_channel,
+            commands::channel::fetch_models,
+            commands::channel::fetch_models_direct,
+            commands::channel::probe_url,
+            commands::channel::test_channel,
+            commands::channel::test_channel_direct,
+            commands::channel::select_models,
+            commands::dirty_cmds::take_dirty,
+            commands::pool::list_entries,
+            commands::pool::list_entries_paginated,
+            commands::pool::toggle_entry,
+            commands::pool::batch_toggle_entries,
+            commands::pool::reorder_entries,
+            commands::pool::delete_entry,
+            commands::pool::create_entry,
+            commands::pool::backfill_entry_catalog_meta,
+            commands::pool::test_entry_latency,
+            commands::pool::update_entry_response_ms,
+            commands::pool::get_all_groups,
+            commands::pool::update_entry_display_name,
+            commands::pool::update_entry_group,
+            commands::token::list_access_keys,
+            commands::token::list_access_keys_paginated,
+            commands::token::create_access_key,
+            commands::token::delete_access_key,
+            commands::token::toggle_access_key,
+            commands::usage::get_usage_logs,
+            commands::usage::get_dashboard_stats,
+            commands::usage::get_model_consumption,
+            commands::usage::get_call_trend,
+            commands::usage::get_model_distribution,
+            commands::usage::get_model_ranking,
+            commands::usage::get_user_ranking,
+            commands::usage::get_user_trend,
+            commands::usage::clear_log_details,
+            commands::config::get_settings,
+            commands::channel::save_channel_with_models,
+            commands::config::update_settings,
+            commands::config::patch_settings,
+            commands::import_export::export_channel_model_transfer,
+            commands::import_export::preview_channel_model_transfer,
+            commands::import_export::import_channel_model_transfer,
+            commands::config::check_update,
+            commands::connection_apps::list_connection_apps,
+            commands::connection_apps::execute_connection_app,
+            commands::proxy_cmd::start_proxy,
+            commands::proxy_cmd::stop_proxy,
+            commands::proxy_cmd::get_proxy_status,
+            commands::proxy_cmd::refresh_tray_menu,
+            commands::test_chat::test_chat,
+            commands::limit::query_limit,
+            commands::admin_cmd::get_admin_status,
+            commands::translation::translate_and_relay,
+            commands::translation::get_translation_relay,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
 
-#[cfg(feature = "gui")]
+#[cfg(all(feature = "gui", not(all(feature = "tray", not(mobile)))))]
+fn configure_platform_shell(app: &mut tauri::App) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+    }
+    log::info!("Running without desktop tray shell");
+}
+
+#[cfg(all(feature = "tray", not(mobile)))]
+fn configure_platform_shell(app: &mut tauri::App) {
+    // Read settings to decide startup behavior
+    let settings = app.state::<AppState>().settings.blocking_read().clone();
+    let runtime_mode = app.state::<AppState>().runtime_mode;
+
+    // Build tray icon and window management (Combined mode only)
+    if runtime_mode == RuntimeMode::Combined {
+        // Build tray icon (ref: cc-switch/src/lib.rs)
+        // If tray build fails, fall back to Standalone behavior (skip tray/window but continue)
+        match build_tray_menu(app.handle()) {
+            Ok(tray_menu) => {
+                match tauri::tray::TrayIconBuilder::with_id(TRAY_ID)
+                    .icon(app.default_window_icon().cloned().unwrap())
+                    .menu(&tray_menu)
+                    .show_menu_on_left_click(true)
+                    .on_tray_icon_event(|tray, event| match event {
+                        tauri::tray::TrayIconEvent::Click { .. } => {
+                            tray_refresh::mark_tray_interaction();
+                        }
+                        tauri::tray::TrayIconEvent::DoubleClick { .. } => {
+                            tray_refresh::mark_tray_interaction();
+                            if let Some(window) = tray.app_handle().get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                        _ => {}
+                    })
+                    .on_menu_event(move |app, event| {
+                        tray_refresh::mark_tray_interaction();
+                        handle_tray_menu_event(app, &event.id.0);
+                    })
+                    .build(app)
+                {
+                    Ok(_tray) => {
+                        log::info!("Tray icon built successfully");
+                        tray_refresh::start_tray_refresh_consumer(app.handle().clone());
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to build tray icon: {e}. Falling back to Standalone behavior (no tray/window).");
+                    }
+                }
+            }
+            Err(e) => {
+                log::warn!("Failed to build tray menu: {e}. Falling back to Standalone behavior (no tray/window).");
+            }
+        }
+
+        // Show or keep hidden based on settings (only if tray succeeded)
+        // Note: We still try to show the window even if tray failed, but the window close handler won't work properly
+        if let Some(window) = app.get_webview_window("main") {
+            if !settings.start_minimized {
+                let _ = window.show();
+            }
+
+            // Intercept window close -> hide to tray instead of exiting
+            let win = window.clone();
+            window.on_window_event(move |event| {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = win.hide();
+                }
+            });
+        }
+    } else {
+        log::info!("Running in Standalone mode - skipping tray and window management");
+    }
+}
+
+#[cfg(all(feature = "tray", not(mobile)))]
 pub(crate) fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let app_state = app.state::<AppState>();
 
@@ -350,15 +368,15 @@ pub(crate) fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<taur
     Menu::with_items(app, &all)
 }
 
-#[cfg(feature = "gui")]
+#[cfg(all(feature = "tray", not(mobile)))]
 use std::sync::OnceLock;
 
-#[cfg(feature = "gui")]
+#[cfg(all(feature = "tray", not(mobile)))]
 const TRAY_DEBOUNCE_MS: u64 = 1500;
-#[cfg(feature = "gui")]
+#[cfg(all(feature = "tray", not(mobile)))]
 static LAST_TRAY_REFRESH: OnceLock<std::sync::Mutex<std::time::Instant>> = OnceLock::new();
 
-#[cfg(feature = "gui")]
+#[cfg(all(feature = "tray", not(mobile)))]
 fn tray_debounce_check() -> bool {
     let now = std::time::Instant::now();
     let lock = LAST_TRAY_REFRESH.get_or_init(|| std::sync::Mutex::new(now));
@@ -372,7 +390,7 @@ fn tray_debounce_check() -> bool {
     true
 }
 
-#[cfg(feature = "gui")]
+#[cfg(all(feature = "tray", not(mobile)))]
 pub(crate) fn refresh_tray_if_enabled(app: &tauri::AppHandle) {
     if !tray_debounce_check() {
         return;
@@ -384,7 +402,10 @@ pub(crate) fn refresh_tray_if_enabled(app: &tauri::AppHandle) {
     }
 }
 
-#[cfg(feature = "gui")]
+#[cfg(all(feature = "gui", not(all(feature = "tray", not(mobile)))))]
+pub(crate) fn refresh_tray_if_enabled(_app: &tauri::AppHandle) {}
+
+#[cfg(all(feature = "tray", not(mobile)))]
 fn handle_tray_menu_event(app: &tauri::AppHandle, event_id: &str) {
     log::info!("[tray] menu event: {event_id}");
 
@@ -444,11 +465,15 @@ fn should_run_headless(mode: RuntimeMode, source: ModeSource) -> bool {
 
 /// 妗岄潰鐜妫€娴嬶紙浠?Linux 闇€瑕佹鏌ワ紝Win/Mac 榛樿鏈夋闈級
 fn has_desktop() -> bool {
+    #[cfg(mobile)]
+    {
+        true
+    }
     #[cfg(target_os = "linux")]
     {
         std::env::var("DISPLAY").is_ok() || std::env::var("WAYLAND_DISPLAY").is_ok()
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(all(not(target_os = "linux"), not(mobile)))]
     {
         true
     }

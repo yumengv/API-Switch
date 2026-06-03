@@ -1,15 +1,15 @@
 use crate::state_version::TrayVersions;
 
-#[cfg(feature = "gui")]
+#[cfg(all(feature = "tray", not(mobile)))]
 use std::sync::{Mutex, OnceLock};
 
-#[cfg(feature = "gui")]
+#[cfg(all(feature = "tray", not(mobile)))]
 const TRAY_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 
-#[cfg(feature = "gui")]
+#[cfg(all(feature = "tray", not(mobile)))]
 const TRAY_INTERACTION_PAUSE: std::time::Duration = std::time::Duration::from_secs(6);
 
-#[cfg(feature = "gui")]
+#[cfg(all(feature = "tray", not(mobile)))]
 static TRAY_REFRESH_PAUSED_UNTIL: OnceLock<Mutex<Option<std::time::Instant>>> = OnceLock::new();
 
 pub(crate) fn should_refresh_tray(
@@ -25,10 +25,14 @@ pub(crate) fn next_seen_versions(
     current: TrayVersions,
     refreshed: bool,
 ) -> TrayVersions {
-    if refreshed { current } else { previous }
+    if refreshed {
+        current
+    } else {
+        previous
+    }
 }
 
-#[cfg(feature = "gui")]
+#[cfg(all(feature = "tray", not(mobile)))]
 pub(crate) fn mark_tray_interaction() {
     let lock = TRAY_REFRESH_PAUSED_UNTIL.get_or_init(|| Mutex::new(None));
     if let Ok(mut paused_until) = lock.lock() {
@@ -36,7 +40,7 @@ pub(crate) fn mark_tray_interaction() {
     }
 }
 
-#[cfg(feature = "gui")]
+#[cfg(all(feature = "tray", not(mobile)))]
 fn interaction_pause_active() -> bool {
     let lock = TRAY_REFRESH_PAUSED_UNTIL.get_or_init(|| Mutex::new(None));
     let Ok(mut paused_until) = lock.lock() else {
@@ -53,7 +57,7 @@ fn interaction_pause_active() -> bool {
     }
 }
 
-#[cfg(feature = "gui")]
+#[cfg(all(feature = "tray", not(mobile)))]
 pub(crate) fn start_tray_refresh_consumer(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         let mut last_seen = crate::state_version::tray_versions();

@@ -29,8 +29,12 @@ pub struct Database {
 impl Database {
     /// Open database next to the real api-switch executable (portable mode).
     pub fn open() -> Result<Self, AppError> {
-        let db_path = data_dir::database_path()?;
-        let conn = open_or_recover(&db_path)?;
+        Self::open_at(data_dir::database_path()?)
+    }
+
+    /// Open database at an already resolved platform data path.
+    pub fn open_at(db_path: impl AsRef<Path>) -> Result<Self, AppError> {
+        let conn = open_or_recover(db_path.as_ref())?;
 
         // Enable WAL mode for better concurrent read performance
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
