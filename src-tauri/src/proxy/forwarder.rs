@@ -77,9 +77,9 @@ fn is_recoverable_decode_timeout_after_stream_started(
     first_token_ms: i64,
     chunk_count: i64,
     streamed_bytes: i64,
-    has_text_delta: bool,
-    has_tool_calls: bool,
-    completion_tokens: i64,
+    _has_text_delta: bool,
+    _has_tool_calls: bool,
+    _completion_tokens: i64,
     has_sse_error: bool,
     is_timeout: bool,
     is_decode: bool,
@@ -87,12 +87,12 @@ fn is_recoverable_decode_timeout_after_stream_started(
 ) -> bool {
     let stream_started =
         status_code == 200 && (first_token_ms > 0 || chunk_count > 0 || streamed_bytes > 0);
-    let has_valid_output = has_text_delta || has_tool_calls || completion_tokens > 0;
 
     // 临时止血：HTTP 200 且已经开始推流后出现 body/decode timeout，
     // 更像传输中途不完整，而不是模型、Token 或上游入口不可用。
     // 本次请求仍记录失败，但不触发普通冷却/长期禁用阈值。
-    stream_started && is_timeout && is_decode && !is_body && !has_valid_output && !has_sse_error
+    // 即使已经出现有效输出，也不应把长流尾部超时归类为入口不可用。
+    stream_started && is_timeout && is_decode && !is_body && !has_sse_error
 }
 
 fn is_decode_timeout_after_stream_started(
@@ -3149,6 +3149,13 @@ data: [DONE]\n",
     fn decode_timeout_after_stream_started_suppresses_cooldown_classification() {
         assert!(is_recoverable_decode_timeout_after_stream_started(
             200, 3705, 1, 218, false, false, 0, false, true, true, false
+        ));
+    }
+
+    #[test]
+    fn decode_timeout_after_valid_output_suppresses_cooldown_classification() {
+        assert!(is_recoverable_decode_timeout_after_stream_started(
+            200, 5041, 33, 9803, true, false, 0, false, true, true, false
         ));
     }
 
