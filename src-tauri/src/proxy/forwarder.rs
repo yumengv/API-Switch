@@ -2666,7 +2666,10 @@ fn split_raw_protocol_for_usage_log(raw_protocol: Option<&Value>) -> (String, St
 
     let mut raw_in = raw_protocol.clone();
     if let Some(obj) = raw_in.as_object_mut() {
-        obj.insert("event".to_string(), Value::String("upstream_request".to_string()));
+        obj.insert(
+            "event".to_string(),
+            Value::String("upstream_request".to_string()),
+        );
         obj.remove("response_timestamp_ms");
         obj.remove("status_code");
         obj.remove("content_type");
@@ -2688,7 +2691,11 @@ fn split_raw_protocol_for_usage_log(raw_protocol: Option<&Value>) -> (String, St
         .or_else(|| raw_protocol.get("error_body"))
         .is_some();
 
-    let content = if has_out { raw_out.to_string() } else { String::new() };
+    let content = if has_out {
+        raw_out.to_string()
+    } else {
+        String::new()
+    };
     (content, raw_in.to_string())
 }
 
@@ -2702,10 +2709,16 @@ fn enrich_usage_log_in(
     stream_end_reason: Option<StreamEndReason>,
 ) {
     if let Some(obj) = other.as_object_mut() {
-        obj.insert("first_token_ms".to_string(), Value::Number(first_token_ms.into()));
+        obj.insert(
+            "first_token_ms".to_string(),
+            Value::Number(first_token_ms.into()),
+        );
         obj.insert("status_code".to_string(), Value::Number(status_code.into()));
         obj.insert("success".to_string(), Value::Bool(success));
-        obj.insert("reasoning_tokens".to_string(), Value::Number(reasoning_tokens.into()));
+        obj.insert(
+            "reasoning_tokens".to_string(),
+            Value::Number(reasoning_tokens.into()),
+        );
         obj.insert(
             "attempt_path".to_string(),
             attempt_path
@@ -2960,7 +2973,10 @@ mod tests {
 
         assert_eq!(content["event"], "upstream_response");
         assert_eq!(content["status_code"], 200);
-        assert_eq!(content["upstream_response_body"]["output"][0]["text"], "原始上游返回");
+        assert_eq!(
+            content["upstream_response_body"]["output"][0]["text"],
+            "原始上游返回"
+        );
         assert!(content.get("gateway_body").is_none());
         assert!(content.get("upstream_body").is_none());
     }

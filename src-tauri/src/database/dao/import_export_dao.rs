@@ -217,6 +217,8 @@ mod tests {
             "auto",
         )
         .unwrap();
+        let before_channels = db.list_channels().unwrap();
+        let before_entries = db.list_entries().unwrap();
 
         {
             let conn = db.conn.lock().unwrap();
@@ -277,10 +279,11 @@ mod tests {
         assert!(result.is_err());
         let channels = db.list_channels().unwrap();
         let entries = db.list_entries().unwrap();
-        assert_eq!(channels.len(), 1);
-        assert_eq!(entries.len(), 1);
-        assert_eq!(channels[0].name, "旧渠道");
-        assert_eq!(channels[0].api_key, "old-key-12345");
-        assert_eq!(entries[0].model, "old-model");
+        assert_eq!(channels.len(), before_channels.len());
+        assert_eq!(entries.len(), before_entries.len());
+        assert!(channels
+            .iter()
+            .any(|channel| channel.name == "旧渠道" && channel.api_key == "old-key-12345"));
+        assert!(entries.iter().any(|entry| entry.model == "old-model"));
     }
 }

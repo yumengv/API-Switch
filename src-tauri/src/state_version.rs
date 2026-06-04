@@ -97,8 +97,20 @@ mod tests {
             token: 3,
         };
 
-        assert!(TrayVersions { pool: 2, ..previous }.has_changed_since(previous));
-        assert!(TrayVersions { channel: 3, ..previous }.has_changed_since(previous));
-        assert!(TrayVersions { token: 4, ..previous }.has_changed_since(previous));
+        assert!(TrayVersions {
+            pool: 2,
+            ..previous
+        }
+        .has_changed_since(previous));
+        assert!(TrayVersions {
+            channel: 3,
+            ..previous
+        }
+        .has_changed_since(previous));
+        assert!(TrayVersions {
+            token: 4,
+            ..previous
+        }
+        .has_changed_since(previous));
     }
 }

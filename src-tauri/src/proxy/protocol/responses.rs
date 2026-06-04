@@ -1513,7 +1513,7 @@ impl ProtocolAdapter for ResponsesAdapter {
             }
 
             // ── Reasoning 增量 ───────────────────────────────────────
-            "response.reasoning_text.delta" | "response.reasoning_summary_text.delta" => {
+            "response.reasoning_text.delta" => {
                 let delta = value.get("delta").and_then(|v| v.as_str()).unwrap_or("");
                 if delta.is_empty() {
                     return None;
