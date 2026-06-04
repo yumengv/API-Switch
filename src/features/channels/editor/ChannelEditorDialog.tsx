@@ -591,7 +591,7 @@ return (
                   placeholder={t('channel.editor.searchPlaceholder', '搜索/创建模型')} 
                   value={modelSearch} 
                   onChange={(e) => setModelSearch(e.target.value)} 
-                  className="h-8 min-w-full flex-1 text-sm sm:min-w-48" 
+                  className="h-8 min-w-full flex-1 text-sm sm:min-w-48"
                 />
                 <Button size="sm" variant="outline" onClick={selectAllFiltered}>{t('common.selectAll', '全选')}</Button>
                 <Button size="sm" variant="outline" onClick={clearAllSelected}>{t('common.clear', '清除')}</Button>
