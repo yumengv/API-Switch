@@ -4,10 +4,11 @@
 //! 在所有构建模式下均可用。
 
 use crate::database::dao::PaginatedResult;
-use crate::database::ApiEntry;
+use crate::database::{ApiEntry, ModelGroupConfig};
 use crate::error::AppError;
 use crate::services::pool_service::{
-    self, CatalogMetaUpdate, CreateEntryParams, TestLatencyResult,
+    self, CatalogMetaUpdate, CreateEntryParams, ReplaceModelGroupEntriesParams, TestLatencyResult,
+    UpsertModelGroupParams,
 };
 
 use super::ServerApi;
@@ -75,6 +76,15 @@ impl ServerApi {
         result
     }
 
+    /// 更新单个入口的自定义排序值。
+    pub fn update_entry_sort_index(&self, id: &str, sort_index: i32) -> Result<(), AppError> {
+        let result = pool_service::update_entry_sort_index(&self.state().db, id, sort_index);
+        if result.is_ok() {
+            crate::event::emit(self.app(), "entries-changed");
+        }
+        result
+    }
+
     /// 删除指定入口。
     pub fn delete_entry(&self, id: &str) -> Result<(), AppError> {
         let result = pool_service::delete_entry(&self.state().db, id);
@@ -134,6 +144,53 @@ impl ServerApi {
     /// 获取所有分组名称。
     pub fn get_all_groups(&self) -> Result<Vec<String>, AppError> {
         pool_service::get_all_groups(&self.state().db)
+    }
+
+    /// 获取模型分组配置。
+    pub fn list_model_groups(&self) -> Result<Vec<ModelGroupConfig>, AppError> {
+        pool_service::list_model_groups(&self.state().db)
+    }
+
+    /// 新增或更新模型分组配置。
+    pub fn upsert_model_group(
+        &self,
+        params: UpsertModelGroupParams,
+    ) -> Result<ModelGroupConfig, AppError> {
+        let result = pool_service::upsert_model_group(&self.state().db, params);
+        if result.is_ok() {
+            crate::event::emit(self.app(), "entries-changed");
+        }
+        result
+    }
+
+    /// 启用或停用模型分组。
+    pub fn update_model_group_enabled(&self, name: &str, enabled: bool) -> Result<(), AppError> {
+        let result = pool_service::update_model_group_enabled(&self.state().db, name, enabled);
+        if result.is_ok() {
+            crate::event::emit(self.app(), "entries-changed");
+        }
+        result
+    }
+
+    /// 删除模型分组并将成员移回 auto。
+    pub fn delete_model_group(&self, name: &str) -> Result<(), AppError> {
+        let result = pool_service::delete_model_group(&self.state().db, name);
+        if result.is_ok() {
+            crate::event::emit(self.app(), "entries-changed");
+        }
+        result
+    }
+
+    /// 替换某个模型分组的成员。
+    pub fn replace_model_group_entries(
+        &self,
+        params: ReplaceModelGroupEntriesParams,
+    ) -> Result<(), AppError> {
+        let result = pool_service::replace_model_group_entries(&self.state().db, params);
+        if result.is_ok() {
+            crate::event::emit(self.app(), "entries-changed");
+        }
+        result
     }
 
     /// 更新指定入口的显示名称。

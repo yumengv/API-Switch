@@ -46,6 +46,21 @@ pub fn create_tables(conn: &Connection) -> Result<(), AppError> {
     )
     .map_err(|e| AppError::Database(e.to_string()))?;
 
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS model_groups (
+            name TEXT PRIMARY KEY,
+            description TEXT NOT NULL DEFAULT '',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            priority INTEGER NOT NULL DEFAULT 0,
+            sort_index INTEGER NOT NULL DEFAULT 0,
+            is_system INTEGER NOT NULL DEFAULT 0,
+            created_at INTEGER NOT NULL DEFAULT 0,
+            updated_at INTEGER NOT NULL DEFAULT 0
+        )",
+        [],
+    )
+    .map_err(|e| AppError::Database(e.to_string()))?;
+
     // 3. Access Keys
     conn.execute(
         "CREATE TABLE IF NOT EXISTS access_keys (
@@ -94,8 +109,10 @@ pub fn create_tables(conn: &Connection) -> Result<(), AppError> {
     .map_err(|e| AppError::Database(e.to_string()))?;
 
     ensure_api_entry_columns(conn)?;
+    ensure_model_group_columns(conn)?;
     ensure_usage_log_columns(conn)?;
     ensure_channel_columns(conn)?;
+    ensure_default_model_groups(conn)?;
 
     // Migrate api_type values in channels table
     // custom -> openai, claude -> anthropic
@@ -239,6 +256,29 @@ fn ensure_api_entry_columns(conn: &Connection) -> Result<(), AppError> {
 
 fn ensure_channel_columns(conn: &Connection) -> Result<(), AppError> {
     ensure_column(conn, "channels", "response_ms", "TEXT DEFAULT ''")?;
+    Ok(())
+}
+
+fn ensure_model_group_columns(conn: &Connection) -> Result<(), AppError> {
+    ensure_column(conn, "model_groups", "description", "TEXT NOT NULL DEFAULT ''")?;
+    ensure_column(conn, "model_groups", "enabled", "INTEGER NOT NULL DEFAULT 1")?;
+    ensure_column(conn, "model_groups", "priority", "INTEGER NOT NULL DEFAULT 0")?;
+    ensure_column(conn, "model_groups", "sort_index", "INTEGER NOT NULL DEFAULT 0")?;
+    ensure_column(conn, "model_groups", "is_system", "INTEGER NOT NULL DEFAULT 0")?;
+    ensure_column(conn, "model_groups", "created_at", "INTEGER NOT NULL DEFAULT 0")?;
+    ensure_column(conn, "model_groups", "updated_at", "INTEGER NOT NULL DEFAULT 0")?;
+    Ok(())
+}
+
+fn ensure_default_model_groups(conn: &Connection) -> Result<(), AppError> {
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "INSERT INTO model_groups (name, description, enabled, priority, sort_index, is_system, created_at, updated_at)
+         VALUES ('auto', 'Auto fallback group', 1, 100, 0, 1, ?1, ?1)
+         ON CONFLICT(name) DO UPDATE SET is_system = 1, enabled = 1, updated_at = excluded.updated_at",
+        [now],
+    )
+    .map_err(|e| AppError::Database(e.to_string()))?;
     Ok(())
 }
 

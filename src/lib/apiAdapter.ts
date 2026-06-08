@@ -29,11 +29,17 @@ export interface ApiAdapter {
     toggle(id: string, enabled: boolean, options?: { pinToTop?: boolean }): Promise<void>;
     batchToggle(ids: string[], enabled: boolean): Promise<void>;
     reorder(orderedIds: string[]): Promise<void>;
+    updateSortIndex(id: string, sortIndex: number): Promise<void>;
     create(params: { channelId: string; model: string; displayName?: string; groupName?: string }): Promise<ApiEntry>;
     delete(id: string): Promise<void>;
     testLatency(id: string, modelScore?: number): Promise<{ entry_id: string; latency_ms: number | null; score: number; error_detail?: string }>;
     backfillCatalogMeta(items: { entryId: string; catalogProvider: string; catalogModelId: string }[]): Promise<void>;
     getGroups(): Promise<string[]>;
+    listModelGroups(): Promise<ModelGroupConfig[]>;
+    upsertModelGroup(params: { name: string; description?: string; enabled?: boolean; priority?: number }): Promise<ModelGroupConfig>;
+    updateModelGroupEnabled(name: string, enabled: boolean): Promise<void>;
+    deleteModelGroup(name: string): Promise<void>;
+    replaceModelGroupEntries(name: string, entryIds: string[]): Promise<void>;
     updateDisplayName(id: string, displayName: string): Promise<void>;
     updateGroup(id: string, groupName: string): Promise<void>;
   };
@@ -84,7 +90,7 @@ settings: {
 
 
 import type { Channel, CreateChannelParams, UpdateChannelParams, FetchModelsResult, ProbeResult, TestChannelResult, TestChannelDirectParams, ModelInfo, ModelCatalogMetaUpdate, SaveChannelWithModelsParams, SaveChannelWithModelsResult } from '../features/channels/types';
-import type { DashboardFilter, DashboardStats, ChartDataPoint, ModelRanking, UsageLog, UsageLogFilter, PaginatedResult, ApiEntry, AccessKey, AppSettings, ProxyStatus, AdminStatus, PlatformCapabilities, TestChatResponse, TranslationRelayPayload, TranslationRelayRequest, ConnectionAppItem, AppConfigResult, ChannelModelImportPreview, ChannelModelImportResult } from '../types';
+import type { DashboardFilter, DashboardStats, ChartDataPoint, ModelRanking, UsageLog, UsageLogFilter, PaginatedResult, ApiEntry, AccessKey, AppSettings, ProxyStatus, AdminStatus, PlatformCapabilities, TestChatResponse, TranslationRelayPayload, TranslationRelayRequest, ConnectionAppItem, AppConfigResult, ChannelModelImportPreview, ChannelModelImportResult, ModelGroupConfig } from '../types';
 
 
 

@@ -801,6 +801,8 @@ export function PoolManager() {
     onSuccess: () => {
       const scrollY = window.scrollY;
       queryClient.invalidateQueries({ queryKey: entriesQueryKey });
+      queryClient.invalidateQueries({ queryKey: ["entries"] });
+      queryClient.invalidateQueries({ queryKey: ["model-groups"] });
       setLocalOrder(null);
       requestAnimationFrame(() => window.scrollTo(0, scrollY));
     },
@@ -830,6 +832,9 @@ export function PoolManager() {
     mutationFn: ({ id, groupName }: { id: string; groupName: string }) => adapter.pool.updateGroup(id, groupName),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: entriesQueryKey });
+      queryClient.invalidateQueries({ queryKey: ["entries"] });
+      queryClient.invalidateQueries({ queryKey: ["groups"] });
+      queryClient.invalidateQueries({ queryKey: ["model-groups"] });
     },
     onError: (err) => {
       toast.error(`${t("apiPool.group.updateFailed")}: ${err}`);

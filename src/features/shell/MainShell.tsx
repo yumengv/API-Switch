@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { BarChart3, BookOpen, ExternalLink, FileText, KeyRound, Layers, Link, LogOut, Menu, Power, Route, Settings, X } from 'lucide-react';
+import { BarChart3, BookOpen, ExternalLink, FileText, Folder, KeyRound, Layers, Link, LogOut, Menu, Power, Route, Settings, X } from 'lucide-react';
 
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
@@ -8,10 +8,11 @@ import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
 import type { AdminStatus, AppSettings, PlatformCapabilities, ProxyStatus } from '@/types';
 
-export type MainPage = 'apiPool' | 'channels' | 'tokens' | 'link' | 'logs' | 'dashboard' | 'translator' | 'settings' | 'guide';
+export type MainPage = 'apiPool' | 'groupManagement' | 'channels' | 'tokens' | 'link' | 'logs' | 'dashboard' | 'translator' | 'settings' | 'guide';
 
 const NAV_ITEMS: { key: MainPage; icon: typeof Layers; labelKey: string; androidHidden?: boolean }[] = [
   { key: 'apiPool', icon: Layers, labelKey: 'nav.apiPool' },
+  { key: 'groupManagement', icon: Folder, labelKey: 'nav.groupManagement' },
   { key: 'channels', icon: Route, labelKey: 'nav.channels' },
   { key: 'tokens', icon: KeyRound, labelKey: 'nav.tokens' },
   { key: 'link', icon: Link, labelKey: 'nav.link', androidHidden: true },

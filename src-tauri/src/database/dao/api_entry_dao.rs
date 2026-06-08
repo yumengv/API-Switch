@@ -3,6 +3,7 @@ use crate::database::{lock_conn, Database};
 use crate::error::AppError;
 use rusqlite::params_from_iter;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiEntry {
@@ -42,6 +43,20 @@ pub struct ApiEntry {
     pub group_name: Option<String>,
     #[serde(default)]
     pub score: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelGroupConfig {
+    pub name: String,
+    pub description: String,
+    pub enabled: bool,
+    pub priority: i32,
+    pub sort_index: i32,
+    pub is_system: bool,
+    pub model_count: i64,
+    pub enabled_model_count: i64,
+    pub created_at: i64,
+    pub updated_at: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -86,6 +101,14 @@ fn owned_by_from_api_type(api_type: Option<String>) -> Option<String> {
         "azure" => Some("openai".to_string()),
         _ => Some(api_type),
     })
+}
+
+fn normalize_group_key(name: &str) -> String {
+    name.trim().to_ascii_lowercase()
+}
+
+fn is_auto_group(name: &str) -> bool {
+    normalize_group_key(name) == "auto"
 }
 
 fn row_to_entry(row: &rusqlite::Row<'_>, include_channel: bool) -> rusqlite::Result<ApiEntry> {
@@ -659,15 +682,11 @@ impl Database {
 
     /// Get all distinct group names from api_entries.
     pub fn get_all_group_names(&self) -> Result<Vec<String>, AppError> {
-        let conn = lock_conn!(self.conn);
-        let mut stmt = conn.prepare("SELECT DISTINCT group_name FROM api_entries WHERE group_name != '' AND group_name IS NOT NULL ORDER BY group_name")?;
-
-        let groups = stmt
-            .query_map([], |row| row.get::<_, String>(0))?
-            .filter_map(|r| r.ok())
-            .collect();
-
-        Ok(groups)
+        Ok(self
+            .list_model_groups()?
+            .into_iter()
+            .map(|group| group.name)
+            .collect())
     }
 
     /// Get enabled entries for a specific group (for tray menu).
@@ -715,5 +734,298 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
+    }
+
+    pub fn list_model_groups(&self) -> Result<Vec<ModelGroupConfig>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let mut entry_counts: HashMap<String, (String, i64, i64)> = HashMap::new();
+        {
+            let mut stmt = conn.prepare(
+                "SELECT group_name, enabled
+                 FROM api_entries
+                 WHERE group_name IS NOT NULL AND TRIM(group_name) != ''",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)? != 0))
+            })?;
+            for row in rows {
+                let (name, enabled) = row?;
+                let key = normalize_group_key(&name);
+                if key.is_empty() {
+                    continue;
+                }
+                let item = entry_counts.entry(key).or_insert((name, 0, 0));
+                item.1 += 1;
+                if enabled {
+                    item.2 += 1;
+                }
+            }
+        }
+
+        let mut groups: Vec<ModelGroupConfig> = {
+            let mut stmt = conn.prepare(
+                "SELECT name, description, enabled, priority, sort_index, is_system, created_at, updated_at
+                 FROM model_groups",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                let name: String = row.get(0)?;
+                let key = normalize_group_key(&name);
+                let (model_count, enabled_model_count) = entry_counts
+                    .get(&key)
+                    .map(|(_, total, enabled)| (*total, *enabled))
+                    .unwrap_or((0, 0));
+                Ok(ModelGroupConfig {
+                    name,
+                    description: row.get(1)?,
+                    enabled: row.get::<_, i32>(2)? != 0,
+                    priority: row.get(3)?,
+                    sort_index: row.get(4)?,
+                    is_system: row.get::<_, i32>(5)? != 0,
+                    model_count,
+                    enabled_model_count,
+                    created_at: row.get(6)?,
+                    updated_at: row.get(7)?,
+                })
+            })?;
+            rows
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| AppError::Database(e.to_string()))?
+        };
+
+        let mut configured_keys: Vec<String> =
+            groups.iter().map(|group| normalize_group_key(&group.name)).collect();
+        if !configured_keys.iter().any(|key| key == "auto") {
+            groups.push(ModelGroupConfig {
+                name: "auto".to_string(),
+                description: "Auto fallback group".to_string(),
+                enabled: true,
+                priority: 100,
+                sort_index: 0,
+                is_system: true,
+                model_count: entry_counts
+                    .get("auto")
+                    .map(|(_, total, _)| *total)
+                    .unwrap_or(0),
+                enabled_model_count: entry_counts
+                    .get("auto")
+                    .map(|(_, _, enabled)| *enabled)
+                    .unwrap_or(0),
+                created_at: 0,
+                updated_at: 0,
+            });
+            configured_keys.push("auto".to_string());
+        }
+
+        for (key, (name, model_count, enabled_model_count)) in entry_counts {
+            if configured_keys.iter().any(|configured| configured == &key) {
+                continue;
+            }
+            groups.push(ModelGroupConfig {
+                name,
+                description: String::new(),
+                enabled: true,
+                priority: 0,
+                sort_index: i32::MAX,
+                is_system: false,
+                model_count,
+                enabled_model_count,
+                created_at: 0,
+                updated_at: 0,
+            });
+        }
+
+        groups.sort_by(|a, b| {
+            if is_auto_group(&a.name) && !is_auto_group(&b.name) {
+                return std::cmp::Ordering::Less;
+            }
+            if !is_auto_group(&a.name) && is_auto_group(&b.name) {
+                return std::cmp::Ordering::Greater;
+            }
+            b.priority
+                .cmp(&a.priority)
+                .then_with(|| a.sort_index.cmp(&b.sort_index))
+                .then_with(|| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()))
+        });
+        Ok(groups)
+    }
+
+    pub fn upsert_model_group(
+        &self,
+        name: &str,
+        description: &str,
+        enabled: bool,
+        priority: i32,
+    ) -> Result<ModelGroupConfig, AppError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(AppError::Validation(
+                "Group name cannot be empty".to_string(),
+            ));
+        }
+        let description = description.trim();
+        let is_system = is_auto_group(name);
+        let enabled = if is_system { true } else { enabled };
+        let conn = lock_conn!(self.conn);
+        let now = chrono::Utc::now().timestamp();
+        let stored_name = conn
+            .query_row(
+                "SELECT name FROM model_groups WHERE LOWER(name) = LOWER(?1)",
+                [name],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap_or_else(|_| name.to_string());
+        let sort_index = conn
+            .query_row(
+                "SELECT sort_index FROM model_groups WHERE LOWER(name) = LOWER(?1)",
+                [name],
+                |row| row.get::<_, i32>(0),
+            )
+            .unwrap_or_else(|_| {
+                conn.query_row(
+                    "SELECT COALESCE(MAX(sort_index), -1) + 1 FROM model_groups",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0)
+            });
+        let existing_created_at = conn
+            .query_row(
+                "SELECT created_at FROM model_groups WHERE LOWER(name) = LOWER(?1)",
+                [name],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap_or(now);
+        conn.execute(
+            "INSERT INTO model_groups (name, description, enabled, priority, sort_index, is_system, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(name) DO UPDATE SET
+                description = excluded.description,
+                enabled = excluded.enabled,
+                priority = excluded.priority,
+                is_system = CASE WHEN model_groups.is_system = 1 THEN 1 ELSE excluded.is_system END,
+                updated_at = excluded.updated_at",
+            rusqlite::params![
+                stored_name,
+                description,
+                enabled as i32,
+                priority,
+                sort_index,
+                is_system as i32,
+                existing_created_at,
+                now,
+            ],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        drop(conn);
+
+        self.list_model_groups()?
+            .into_iter()
+            .find(|group| group.name.eq_ignore_ascii_case(name))
+            .ok_or_else(|| AppError::NotFound(format!("Group {name} not found")))
+    }
+
+    pub fn update_model_group_enabled(&self, name: &str, enabled: bool) -> Result<(), AppError> {
+        let normalized = name.trim();
+        if normalized.is_empty() {
+            return Err(AppError::Validation(
+                "Group name cannot be empty".to_string(),
+            ));
+        }
+        let enabled = if is_auto_group(normalized) { true } else { enabled };
+        let existing = self
+            .list_model_groups()?
+            .into_iter()
+            .find(|group| group.name.eq_ignore_ascii_case(normalized));
+        if let Some(group) = existing {
+            self.upsert_model_group(&group.name, &group.description, enabled, group.priority)?;
+        } else {
+            self.upsert_model_group(normalized, "", enabled, 0)?;
+        }
+        Ok(())
+    }
+
+    pub fn delete_model_group(&self, name: &str) -> Result<(), AppError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(AppError::Validation(
+                "Group name cannot be empty".to_string(),
+            ));
+        }
+        if is_auto_group(name) {
+            return Err(AppError::Validation(
+                "The auto group cannot be deleted".to_string(),
+            ));
+        }
+
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn.transaction()?;
+        let now = chrono::Utc::now().timestamp();
+        tx.execute(
+            "UPDATE api_entries
+             SET group_name = 'auto', updated_at = ?1
+             WHERE LOWER(group_name) = LOWER(?2)",
+            rusqlite::params![now, name],
+        )?;
+        tx.execute(
+            "DELETE FROM model_groups WHERE LOWER(name) = LOWER(?1)",
+            [name],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn replace_model_group_entries(
+        &self,
+        name: &str,
+        entry_ids: &[String],
+    ) -> Result<(), AppError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(AppError::Validation(
+                "Group name cannot be empty".to_string(),
+            ));
+        }
+        if !is_auto_group(name)
+            && !self
+                .list_model_groups()?
+                .iter()
+                .any(|group| group.name.eq_ignore_ascii_case(name))
+        {
+            let _ = self.upsert_model_group(name, "", true, 0)?;
+        }
+
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn.transaction()?;
+        let now = chrono::Utc::now().timestamp();
+        if !is_auto_group(name) {
+            tx.execute(
+                "UPDATE api_entries
+                 SET group_name = 'auto', updated_at = ?1
+                 WHERE LOWER(group_name) = LOWER(?2)",
+                rusqlite::params![now, name],
+            )?;
+        }
+        for entry_id in entry_ids {
+            tx.execute(
+                "UPDATE api_entries
+                 SET group_name = ?1, updated_at = ?2
+                 WHERE id = ?3",
+                rusqlite::params![name, now, entry_id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn get_disabled_model_group_names(&self) -> Result<Vec<String>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let mut stmt = conn.prepare(
+            "SELECT name FROM model_groups WHERE enabled = 0 AND LOWER(name) != 'auto'",
+        )?;
+        let groups = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(groups)
     }
 }

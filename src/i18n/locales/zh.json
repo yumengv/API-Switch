@@ -4,6 +4,7 @@
   },
   "nav": {
     "apiPool": "模型管理",
+    "groupManagement": "模型分组",
     "channels": "渠道管理",
     "logs": "使用日志",
     "tokens": "令牌管理",

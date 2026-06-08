@@ -107,6 +107,19 @@ export interface CreateEntryParams {
   group_name?: string;
 }
 
+export interface ModelGroupConfig {
+  name: string;
+  description: string;
+  enabled: boolean;
+  priority: number;
+  sort_index: number;
+  is_system: boolean;
+  model_count: number;
+  enabled_model_count: number;
+  created_at: number;
+  updated_at: number;
+}
+
 export type CircuitState = "closed" | "open" | "half_open";
 
 // --- Access Key ---

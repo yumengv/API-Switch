@@ -1,7 +1,7 @@
 use super::circuit_breaker::CircuitBreaker;
 use crate::database::ApiEntry;
 use chrono::NaiveDate;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tokio::sync::RwLock;
 
 /// Parse response_ms field to milliseconds.
@@ -113,7 +113,30 @@ pub async fn resolve(
     circuit_breakers: &RwLock<HashMap<String, CircuitBreaker>>,
     _sort_mode: &str,
 ) -> Vec<ApiEntry> {
+    resolve_with_disabled_groups(
+        model,
+        all_entries,
+        auto_entries,
+        &[],
+        circuit_breakers,
+        _sort_mode,
+    )
+    .await
+}
+
+pub async fn resolve_with_disabled_groups(
+    model: &str,
+    all_entries: &[ApiEntry],
+    auto_entries: &[ApiEntry],
+    disabled_group_names: &[String],
+    circuit_breakers: &RwLock<HashMap<String, CircuitBreaker>>,
+    _sort_mode: &str,
+) -> Vec<ApiEntry> {
     let normalized_model = normalize_model(model);
+    let disabled_groups: HashSet<String> = disabled_group_names
+        .iter()
+        .map(|group| group.trim().to_ascii_lowercase())
+        .collect();
     let breakers = circuit_breakers.read().await;
     let all_available = available_entries(all_entries, &breakers);
 
@@ -123,7 +146,10 @@ pub async fn resolve(
             entry
                 .group_name
                 .as_deref()
-                .map(|group| group.eq_ignore_ascii_case(&normalized_model))
+                .map(|group| {
+                    group.eq_ignore_ascii_case(&normalized_model)
+                        && !disabled_groups.contains(&group.trim().to_ascii_lowercase())
+                })
                 .unwrap_or(false)
         })
         .cloned()
@@ -281,6 +307,31 @@ mod tests {
         assert_eq!(
             resolved.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
             vec!["group-match"]
+        );
+    }
+
+    #[tokio::test]
+    async fn disabled_group_match_is_skipped_and_falls_back_to_auto() {
+        let breakers = RwLock::new(HashMap::new());
+        let all = vec![
+            entry_with_group("disabled-group", "unrelated-model", true, 0, "coding"),
+            entry_with_group("auto-first", "gpt-4o", true, 1, "auto"),
+        ];
+        let disabled_groups = vec!["coding".to_string()];
+
+        let resolved = resolve_with_disabled_groups(
+            "coding",
+            &all,
+            &all,
+            &disabled_groups,
+            &breakers,
+            "custom",
+        )
+        .await;
+
+        assert_eq!(
+            resolved.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
+            vec!["auto-first"]
         );
     }
 

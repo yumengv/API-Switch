@@ -132,11 +132,13 @@ pub async fn handle_responses(
 
     let all_entries = state.db.get_entries_for_routing()?;
     let auto_entries = state.db.get_enabled_entries_for_auto()?;
+    let disabled_group_names = state.db.get_disabled_model_group_names()?;
     let sort_mode = state.settings.read().await.default_sort_mode.clone();
-    let resolved = router::resolve(
+    let resolved = router::resolve_with_disabled_groups(
         &requested_model,
         &all_entries,
         &auto_entries,
+        &disabled_group_names,
         &state.circuit_breakers,
         &sort_mode,
     )

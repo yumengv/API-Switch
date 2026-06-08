@@ -33,6 +33,7 @@ import type {
   AppConfigResult,
   ChannelModelImportPreview,
   ChannelModelImportResult,
+  ModelGroupConfig,
 } from '../types';
 import { ADMIN_API_PREFIX } from './adminApiConfig';
 import { clearToken, emitAuthExpired, TOKEN_KEY } from './webAuth';
@@ -394,6 +395,11 @@ export const apiAdapter: ApiAdapter = {
         ? tauriCmd<void>('reorder_entries', { orderedIds })
         : webRequest<void>('POST', '/pool/reorder', { ordered_ids: orderedIds }),
 
+    updateSortIndex: (id, sortIndex) =>
+      useTauri()
+        ? tauriCmd<void>('update_entry_sort_index', { id, sortIndex })
+        : webRequest<void>('PUT', `/pool/${id}/sort-index`, { sort_index: sortIndex }),
+
     create: (params) =>
       useTauri()
         ? tauriCmd<ApiEntry>('create_entry', { params: { channel_id: params.channelId, model: params.model, display_name: params.displayName, group_name: params.groupName } })
@@ -456,6 +462,38 @@ export const apiAdapter: ApiAdapter = {
       useTauri()
         ? tauriCmd<string[]>('get_all_groups')
         : webRequest<string[]>('GET', '/pool/groups'),
+
+    listModelGroups: () =>
+      useTauri()
+        ? tauriCmd<ModelGroupConfig[]>('list_model_groups')
+        : webRequest<ModelGroupConfig[]>('GET', '/pool/model-groups'),
+
+    upsertModelGroup: (params) => {
+      const payload = {
+        name: params.name,
+        description: params.description ?? '',
+        enabled: params.enabled ?? true,
+        priority: params.priority ?? 0,
+      };
+      return useTauri()
+        ? tauriCmd<ModelGroupConfig>('upsert_model_group', { params: payload })
+        : webRequest<ModelGroupConfig>('POST', '/pool/model-groups', payload);
+    },
+
+    updateModelGroupEnabled: (name, enabled) =>
+      useTauri()
+        ? tauriCmd<void>('update_model_group_enabled', { params: { name, enabled } })
+        : webRequest<void>('PUT', `/pool/model-groups/${encodeURIComponent(name)}/enabled`, { enabled }),
+
+    deleteModelGroup: (name) =>
+      useTauri()
+        ? tauriCmd<void>('delete_model_group', { name })
+        : webRequest<void>('DELETE', `/pool/model-groups/${encodeURIComponent(name)}`),
+
+    replaceModelGroupEntries: (name, entryIds) =>
+      useTauri()
+        ? tauriCmd<void>('replace_model_group_entries', { params: { name, entry_ids: entryIds } })
+        : webRequest<void>('PUT', `/pool/model-groups/${encodeURIComponent(name)}/entries`, { entry_ids: entryIds }),
 
     updateGroup: (id, groupName) =>
       useTauri()

@@ -1,7 +1,7 @@
 use crate::admin::error::AdminError;
 use crate::admin::state::AdminState;
 use crate::database::dao::PaginatedResult;
-use crate::database::ApiEntry;
+use crate::database::{ApiEntry, ModelGroupConfig};
 use crate::services::pool_service;
 use axum::extract::{Json, Path, Query, State};
 use serde::Deserialize;
@@ -45,9 +45,40 @@ pub struct ReorderParams {
 }
 
 #[derive(Deserialize)]
+pub struct SortIndexParams {
+    #[serde(alias = "sortIndex")]
+    pub sort_index: i32,
+}
+
+#[derive(Deserialize)]
 pub struct TestLatencyParams {
     #[serde(default)]
     pub model_score: f64,
+}
+
+#[derive(Deserialize)]
+pub struct UpsertModelGroupParams {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default = "default_group_enabled")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub priority: i32,
+}
+
+#[derive(Deserialize)]
+pub struct ModelGroupEnabledParams {
+    pub enabled: bool,
+}
+
+#[derive(Deserialize)]
+pub struct ReplaceModelGroupEntriesParams {
+    pub entry_ids: Vec<String>,
+}
+
+fn default_group_enabled() -> bool {
+    true
 }
 
 // ---------- Handlers -------------------------------------------------------
@@ -141,6 +172,18 @@ pub async fn reorder(
     Ok(Json(serde_json::json!({"ok": true})))
 }
 
+/// PUT /admin/pool/:id/sort-index - Update a single entry's custom sort index
+pub async fn update_sort_index(
+    State(state): State<AdminState>,
+    Path(id): Path<String>,
+    Json(payload): Json<SortIndexParams>,
+) -> Result<Json<serde_json::Value>, AdminError> {
+    state
+        .server_api()?
+        .update_entry_sort_index(&id, payload.sort_index)?;
+    Ok(Json(serde_json::json!({"ok": true})))
+}
+
 /// POST /admin/pool/:id/test-latency - Test latency for a specific entry
 pub async fn test_latency(
     State(state): State<AdminState>,
@@ -182,6 +225,66 @@ pub async fn backfill_catalog_meta(
 pub async fn get_groups(State(state): State<AdminState>) -> Result<Json<Vec<String>>, AdminError> {
     let groups = state.server_api()?.get_all_groups()?;
     Ok(Json(groups))
+}
+
+/// GET /admin/pool/model-groups - List model group configs.
+pub async fn list_model_groups(
+    State(state): State<AdminState>,
+) -> Result<Json<Vec<ModelGroupConfig>>, AdminError> {
+    let groups = state.server_api()?.list_model_groups()?;
+    Ok(Json(groups))
+}
+
+/// POST /admin/pool/model-groups - Create or update a model group.
+pub async fn upsert_model_group(
+    State(state): State<AdminState>,
+    Json(payload): Json<UpsertModelGroupParams>,
+) -> Result<Json<ModelGroupConfig>, AdminError> {
+    let group = state
+        .server_api()?
+        .upsert_model_group(pool_service::UpsertModelGroupParams {
+            name: payload.name,
+            description: payload.description,
+            enabled: payload.enabled,
+            priority: payload.priority,
+        })?;
+    Ok(Json(group))
+}
+
+/// PUT /admin/pool/model-groups/:name/enabled - Toggle a model group.
+pub async fn update_model_group_enabled(
+    State(state): State<AdminState>,
+    Path(name): Path<String>,
+    Json(payload): Json<ModelGroupEnabledParams>,
+) -> Result<Json<serde_json::Value>, AdminError> {
+    state
+        .server_api()?
+        .update_model_group_enabled(&name, payload.enabled)?;
+    Ok(Json(serde_json::json!({"ok": true})))
+}
+
+/// DELETE /admin/pool/model-groups/:name - Delete a model group.
+pub async fn delete_model_group(
+    State(state): State<AdminState>,
+    Path(name): Path<String>,
+) -> Result<Json<serde_json::Value>, AdminError> {
+    state.server_api()?.delete_model_group(&name)?;
+    Ok(Json(serde_json::json!({"ok": true})))
+}
+
+/// PUT /admin/pool/model-groups/:name/entries - Replace model group members.
+pub async fn replace_model_group_entries(
+    State(state): State<AdminState>,
+    Path(name): Path<String>,
+    Json(payload): Json<ReplaceModelGroupEntriesParams>,
+) -> Result<Json<serde_json::Value>, AdminError> {
+    state.server_api()?.replace_model_group_entries(
+        pool_service::ReplaceModelGroupEntriesParams {
+            name,
+            entry_ids: payload.entry_ids,
+        },
+    )?;
+    Ok(Json(serde_json::json!({"ok": true})))
 }
 
 /// PUT /admin/pool/:id/display-name - Update the display_name (alias) for an entry

@@ -29,6 +29,8 @@ type EditorModelInfo = ModelInfo & {
   temporary?: boolean;
 };
 
+const MODEL_TEST_CONCURRENCY = 8;
+
 /** 渠道编辑器对话框组件 */
 export const ChannelEditorDialog: React.FC<{
   open: boolean;
@@ -54,6 +56,7 @@ export const ChannelEditorDialog: React.FC<{
   const [timeRange, setTimeRange] = useState<3 | 6 | 12>(3);
   // 模型测速状态
   const [testingModels, setTestingModels] = useState(false);
+  const [modelTestProgress, setModelTestProgress] = useState<{ current: number; total: number } | null>(null);
   const [modelTestResults, setModelTestResults] = useState<Record<string, { success: boolean; latency?: number; reason?: string }>>({});
 
   const probeSeqRef = useRef(0);
@@ -337,39 +340,48 @@ export const ChannelEditorDialog: React.FC<{
   };
 
   const handleTestModels = async () => {
-    if (filteredModels.length > 30) {
-      toast.error(t('channel.editor.tooManyModelsToTest', '模型数量过多（{{count}}个），测速耗时较长，请减少筛选范围', { count: filteredModels.length }));
-      return;
-    }
-
     const seq = ++testSeqRef.current;
+    const modelsToTest = [...filteredModels];
     setTestingModels(true);
+    setModelTestProgress({ current: 0, total: modelsToTest.length });
     setModelTestResults({});
     const results: Record<string, { success: boolean; latency?: number; reason?: string }> = {};
+    let completed = 0;
+    let nextIndex = 0;
+
+    const testOne = async (model: EditorModelInfo) => {
+      try {
+        const result = await api.channels.testChannelDirect({
+          api_type: form.api_type,
+          base_url: form.base_url,
+          api_key: primaryApiKey,
+          model: model.name,
+        });
+        results[model.name] = result.success
+          ? { success: true, latency: result.latency_ms }
+          : { success: false, reason: result.message };
+      } catch (err) {
+        results[model.name] = { success: false, reason: err instanceof Error ? err.message : String(err) };
+      }
+      completed += 1;
+      if (testSeqRef.current === seq) {
+        setModelTestResults({ ...results });
+        setModelTestProgress({ current: completed, total: modelsToTest.length });
+      }
+    };
+
+    const worker = async () => {
+      while (testSeqRef.current === seq) {
+        const model = modelsToTest[nextIndex];
+        nextIndex += 1;
+        if (!model) return;
+        await testOne(model);
+      }
+    };
+
     try {
-      await withTimeout(
-        (async () => {
-          for (const model of filteredModels) {
-            if (testSeqRef.current !== seq) return;
-            try {
-              const result = await api.channels.testChannelDirect({
-                api_type: form.api_type,
-                base_url: form.base_url,
-                api_key: primaryApiKey,
-                model: model.name,
-              });
-              results[model.name] = result.success
-                ? { success: true, latency: result.latency_ms }
-                : { success: false, reason: result.message };
-            } catch (err) {
-              results[model.name] = { success: false, reason: err instanceof Error ? err.message : String(err) };
-            }
-            if (testSeqRef.current === seq) setModelTestResults({ ...results });
-          }
-        })(),
-        10_000,
-        t('channel.editor.testModelsTimeout', '模型测速超时'),
-      );
+      const workerCount = Math.min(MODEL_TEST_CONCURRENCY, modelsToTest.length);
+      await Promise.all(Array.from({ length: workerCount }, worker));
     } catch (err) {
       if (testSeqRef.current === seq) {
         toast.error(err instanceof Error ? err.message : String(err));
@@ -377,6 +389,7 @@ export const ChannelEditorDialog: React.FC<{
     } finally {
       if (testSeqRef.current === seq) {
         setTestingModels(false);
+        setModelTestProgress(null);
       }
     }
   };
@@ -653,7 +666,7 @@ return (
               >
                 <Zap className={cn('h-4 w-4', testingModels && 'animate-pulse')} />
                 {testingModels 
-                  ? t('channel.editor.testingModels', '测速中...') 
+                  ? `${t('channel.editor.testingModels', '测速中...')} ${modelTestProgress ? `${modelTestProgress.current}/${modelTestProgress.total}` : ''}`
                   : t('channel.editor.testModels', '模型测速')
                 }
                 {filteredModels.length > 0 && !testingModels && (

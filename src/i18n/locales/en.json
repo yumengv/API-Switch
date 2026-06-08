@@ -4,6 +4,7 @@
   },
   "nav": {
     "apiPool": "Models",
+    "groupManagement": "Model Groups",
     "channels": "Channels",
     "logs": "Usage Logs",
     "tokens": "Access Keys",

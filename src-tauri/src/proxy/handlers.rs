@@ -7,6 +7,7 @@ use super::protocol::{
 };
 use super::router;
 use super::server::ProxyState;
+use crate::database::ApiEntry;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
@@ -47,6 +48,25 @@ async fn load_sorted_entries(
     let sort_mode = state.settings.read().await.default_sort_mode.clone();
     router::apply_sort_mode(&mut entries, &sort_mode);
     Ok(entries)
+}
+
+async fn resolve_requested_entries(
+    state: &ProxyState,
+    requested_model: &str,
+) -> Result<Vec<ApiEntry>, ProxyError> {
+    let all_entries = state.db.get_entries_for_routing()?;
+    let auto_entries = state.db.get_enabled_entries_for_auto()?;
+    let disabled_group_names = state.db.get_disabled_model_group_names()?;
+    let sort_mode = state.settings.read().await.default_sort_mode.clone();
+    Ok(router::resolve_with_disabled_groups(
+        requested_model,
+        &all_entries,
+        &auto_entries,
+        &disabled_group_names,
+        &state.circuit_breakers,
+        &sort_mode,
+    )
+    .await)
 }
 
 fn dedup_models_by_name(
@@ -258,17 +278,7 @@ pub async fn handle_chat_completions(
     // Resolve target entries
     // - AUTO: only enabled entries enter the auto pool
     // - named routes: resolution is based on group/model matching before AUTO fallback
-    let all_entries = state.db.get_entries_for_routing()?;
-    let auto_entries = state.db.get_enabled_entries_for_auto()?;
-    let sort_mode = state.settings.read().await.default_sort_mode.clone();
-    let resolved = router::resolve(
-        &requested_model,
-        &all_entries,
-        &auto_entries,
-        &state.circuit_breakers,
-        &sort_mode,
-    )
-    .await;
+    let resolved = resolve_requested_entries(&state, &requested_model).await?;
 
     if resolved.is_empty() {
         return Err(ProxyError::NoAvailableProvider(requested_model));
@@ -339,17 +349,7 @@ pub async fn handle_messages(
         .unwrap_or(false);
 
     // Resolve target entries (same logic as chat completions)
-    let all_entries = state.db.get_entries_for_routing()?;
-    let auto_entries = state.db.get_enabled_entries_for_auto()?;
-    let sort_mode = state.settings.read().await.default_sort_mode.clone();
-    let resolved = router::resolve(
-        &requested_model,
-        &all_entries,
-        &auto_entries,
-        &state.circuit_breakers,
-        &sort_mode,
-    )
-    .await;
+    let resolved = resolve_requested_entries(&state, &requested_model).await?;
 
     if resolved.is_empty() {
         return Err(ProxyError::NoAvailableProvider(requested_model));
@@ -407,11 +407,17 @@ pub async fn handle_list_models(
     State(state): State<ProxyState>,
 ) -> Result<Json<Value>, ProxyError> {
     let entries = dedup_models_by_name(load_sorted_entries(&state).await?);
+    let disabled_groups: HashSet<String> = state
+        .db
+        .get_disabled_model_group_names()?
+        .into_iter()
+        .map(|name| name.trim().to_ascii_lowercase())
+        .collect();
 
     let mut group_set: HashSet<String> = HashSet::new();
     for e in &entries {
         if let Some(name) = &e.group_name {
-            if !name.is_empty() {
+            if !name.is_empty() && !disabled_groups.contains(&name.trim().to_ascii_lowercase()) {
                 group_set.insert(name.clone());
             }
         }
@@ -541,17 +547,7 @@ async fn handle_gemini_generate_content(
 
     let requested_model = normalize_requested_model(Some(model));
 
-    let all_entries = state.db.get_entries_for_routing()?;
-    let auto_entries = state.db.get_enabled_entries_for_auto()?;
-    let sort_mode = state.settings.read().await.default_sort_mode.clone();
-    let resolved = router::resolve(
-        &requested_model,
-        &all_entries,
-        &auto_entries,
-        &state.circuit_breakers,
-        &sort_mode,
-    )
-    .await;
+    let resolved = resolve_requested_entries(&state, &requested_model).await?;
 
     if resolved.is_empty() {
         return Err(ProxyError::NoAvailableProvider(requested_model));
@@ -615,17 +611,7 @@ async fn handle_gemini_stream_generate_content(
 
     let requested_model = normalize_requested_model(Some(model));
 
-    let all_entries = state.db.get_entries_for_routing()?;
-    let auto_entries = state.db.get_enabled_entries_for_auto()?;
-    let sort_mode = state.settings.read().await.default_sort_mode.clone();
-    let resolved = router::resolve(
-        &requested_model,
-        &all_entries,
-        &auto_entries,
-        &state.circuit_breakers,
-        &sort_mode,
-    )
-    .await;
+    let resolved = resolve_requested_entries(&state, &requested_model).await?;
 
     if resolved.is_empty() {
         return Err(ProxyError::NoAvailableProvider(requested_model));
@@ -712,6 +698,7 @@ pub async fn handle_azure_chat(
 
     let all_entries = state.db.get_entries_for_routing()?;
     let auto_entries = state.db.get_enabled_entries_for_auto()?;
+    let disabled_group_names = state.db.get_disabled_model_group_names()?;
     let sort_mode = state.settings.read().await.default_sort_mode.clone();
 
     let mut resolved: Vec<crate::database::ApiEntry> = {
@@ -725,10 +712,11 @@ pub async fn handle_azure_chat(
     };
 
     if resolved.is_empty() {
-        resolved = router::resolve(
+        resolved = router::resolve_with_disabled_groups(
             &requested_model,
             &all_entries,
             &auto_entries,
+            &disabled_group_names,
             &state.circuit_breakers,
             &sort_mode,
         )

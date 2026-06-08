@@ -95,6 +95,10 @@ pub fn build_admin_router(state: AdminState) -> Router {
         .route("/admin/pool/:id", delete(pool_handlers::delete))
         .route("/admin/pool/reorder", post(pool_handlers::reorder))
         .route(
+            "/admin/pool/:id/sort-index",
+            put(pool_handlers::update_sort_index),
+        )
+        .route(
             "/admin/pool/:id/test-latency",
             post(pool_handlers::test_latency),
         )
@@ -103,6 +107,22 @@ pub fn build_admin_router(state: AdminState) -> Router {
             post(pool_handlers::backfill_catalog_meta),
         )
         .route("/admin/pool/groups", get(pool_handlers::get_groups))
+        .route(
+            "/admin/pool/model-groups",
+            get(pool_handlers::list_model_groups).post(pool_handlers::upsert_model_group),
+        )
+        .route(
+            "/admin/pool/model-groups/:name/enabled",
+            put(pool_handlers::update_model_group_enabled),
+        )
+        .route(
+            "/admin/pool/model-groups/:name",
+            delete(pool_handlers::delete_model_group),
+        )
+        .route(
+            "/admin/pool/model-groups/:name/entries",
+            put(pool_handlers::replace_model_group_entries),
+        )
         .route(
             "/admin/pool/:id/display-name",
             put(pool_handlers::update_display_name),

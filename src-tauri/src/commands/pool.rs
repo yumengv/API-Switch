@@ -1,5 +1,5 @@
 use crate::database::dao::PaginatedResult;
-use crate::database::ApiEntry;
+use crate::database::{ApiEntry, ModelGroupConfig};
 use crate::error::AppError;
 use crate::server_api::ServerApi;
 use crate::services::pool_service;
@@ -41,6 +41,33 @@ pub struct EntryCatalogMetaUpdate {
     pub release_date: String,
     pub model_meta_zh: String,
     pub model_meta_en: String,
+}
+
+#[derive(Deserialize)]
+pub struct UpsertModelGroupParams {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default = "default_group_enabled")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub priority: i32,
+}
+
+#[derive(Deserialize)]
+pub struct ModelGroupEnabledParams {
+    pub name: String,
+    pub enabled: bool,
+}
+
+#[derive(Deserialize)]
+pub struct ReplaceModelGroupEntriesParams {
+    pub name: String,
+    pub entry_ids: Vec<String>,
+}
+
+fn default_group_enabled() -> bool {
+    true
 }
 
 impl From<CreateEntryParams> for pool_service::CreateEntryParams {
@@ -123,6 +150,17 @@ pub async fn reorder_entries(
 }
 
 #[tauri::command]
+pub async fn update_entry_sort_index(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    sort_index: i32,
+) -> Result<(), AppError> {
+    let api = ServerApi::new(state.inner().clone(), app);
+    api.update_entry_sort_index(&id, sort_index)
+}
+
+#[tauri::command]
 pub async fn delete_entry(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -198,6 +236,63 @@ pub fn get_all_groups(
 ) -> Result<Vec<String>, AppError> {
     let api = ServerApi::new(state.inner().clone(), app);
     api.get_all_groups()
+}
+
+#[tauri::command]
+pub fn list_model_groups(
+    app: crate::AppEventHandle,
+    state: State<'_, AppState>,
+) -> Result<Vec<ModelGroupConfig>, AppError> {
+    let api = ServerApi::new(state.inner().clone(), app);
+    api.list_model_groups()
+}
+
+#[tauri::command]
+pub async fn upsert_model_group(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    params: UpsertModelGroupParams,
+) -> Result<ModelGroupConfig, AppError> {
+    let api = ServerApi::new(state.inner().clone(), app);
+    api.upsert_model_group(pool_service::UpsertModelGroupParams {
+        name: params.name,
+        description: params.description,
+        enabled: params.enabled,
+        priority: params.priority,
+    })
+}
+
+#[tauri::command]
+pub async fn update_model_group_enabled(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    params: ModelGroupEnabledParams,
+) -> Result<(), AppError> {
+    let api = ServerApi::new(state.inner().clone(), app);
+    api.update_model_group_enabled(&params.name, params.enabled)
+}
+
+#[tauri::command]
+pub async fn delete_model_group(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<(), AppError> {
+    let api = ServerApi::new(state.inner().clone(), app);
+    api.delete_model_group(&name)
+}
+
+#[tauri::command]
+pub async fn replace_model_group_entries(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    params: ReplaceModelGroupEntriesParams,
+) -> Result<(), AppError> {
+    let api = ServerApi::new(state.inner().clone(), app);
+    api.replace_model_group_entries(pool_service::ReplaceModelGroupEntriesParams {
+        name: params.name,
+        entry_ids: params.entry_ids,
+    })
 }
 
 #[tauri::command]

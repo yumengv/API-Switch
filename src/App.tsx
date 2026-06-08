@@ -11,6 +11,7 @@ import { AUTH_EXPIRED_EVENT, clearToken, getToken, validateToken, type AuthExpir
 import { checkUpdate, type UpdateInfo } from "@/lib/api";
 
 const ApiPoolPage = lazy(() => import("@/pages/ApiPoolPage").then((m) => ({ default: m.ApiPoolPage })));
+const GroupManagementPage = lazy(() => import("@/pages/GroupManagementPage").then((m) => ({ default: m.GroupManagementPage })));
 const ChannelPage = lazy(() => import("@/pages/ChannelPage").then((m) => ({ default: m.ChannelPage })));
 const TokenPage = lazy(() => import("@/pages/TokenPage").then((m) => ({ default: m.TokenPage })));
 const LinkPage = lazy(() => import("@/pages/LinkPage").then((m) => ({ default: m.LinkPage })));
@@ -122,6 +123,7 @@ function MainApp({ onLogout }: { onLogout?: () => void }) {
     const page = (() => {
       switch (currentPage) {
         case "apiPool": return <ApiPoolPage />;
+        case "groupManagement": return <GroupManagementPage />;
         case "channels": return <ChannelPage />;
         case "tokens": return <TokenPage />;
         case "link": return <LinkPage />;

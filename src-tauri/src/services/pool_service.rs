@@ -1,5 +1,5 @@
 use crate::database::dao::PaginatedResult;
-use crate::database::{ApiEntry, Database, EntryCatalogMetaInput};
+use crate::database::{ApiEntry, Database, EntryCatalogMetaInput, ModelGroupConfig};
 use crate::error::AppError;
 use crate::proxy::protocol::get_adapter;
 use crate::services::api_key_utils::primary_api_key;
@@ -72,6 +72,23 @@ pub struct CatalogMetaUpdate {
     pub model_meta_en: String,
 }
 
+#[derive(Deserialize)]
+pub struct UpsertModelGroupParams {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default = "default_group_enabled")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub priority: i32,
+}
+
+#[derive(Deserialize)]
+pub struct ReplaceModelGroupEntriesParams {
+    pub name: String,
+    pub entry_ids: Vec<String>,
+}
+
 #[derive(Serialize)]
 pub struct TestLatencyResult {
     pub status: String,
@@ -79,6 +96,10 @@ pub struct TestLatencyResult {
     pub score: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_detail: Option<String>,
+}
+
+fn default_group_enabled() -> bool {
+    true
 }
 
 /// List all API entries from the database.
@@ -147,6 +168,17 @@ fn toggle_entry_inner(
 /// Reorder entries by the given ordered IDs.
 pub fn reorder_entries(db: &Database, ordered_ids: &[String]) -> Result<(), AppError> {
     db.reorder_entries(ordered_ids)?;
+    crate::state_version::bump("pool");
+    Ok(())
+}
+
+/// Update a single entry's custom sort index.
+pub fn update_entry_sort_index(
+    db: &Database,
+    entry_id: &str,
+    sort_index: i32,
+) -> Result<(), AppError> {
+    db.update_entry_sort_index(entry_id, sort_index)?;
     crate::state_version::bump("pool");
     Ok(())
 }
@@ -493,6 +525,49 @@ pub fn update_entry_response_ms(
 /// Get all distinct group names from the database.
 pub fn get_all_groups(db: &Database) -> Result<Vec<String>, AppError> {
     db.get_all_group_names()
+}
+
+pub fn list_model_groups(db: &Database) -> Result<Vec<ModelGroupConfig>, AppError> {
+    db.list_model_groups()
+}
+
+pub fn upsert_model_group(
+    db: &Database,
+    params: UpsertModelGroupParams,
+) -> Result<ModelGroupConfig, AppError> {
+    let group = db.upsert_model_group(
+        &params.name,
+        &params.description,
+        params.enabled,
+        params.priority,
+    )?;
+    crate::state_version::bump("pool");
+    Ok(group)
+}
+
+pub fn update_model_group_enabled(
+    db: &Database,
+    name: &str,
+    enabled: bool,
+) -> Result<(), AppError> {
+    db.update_model_group_enabled(name, enabled)?;
+    crate::state_version::bump("pool");
+    Ok(())
+}
+
+pub fn delete_model_group(db: &Database, name: &str) -> Result<(), AppError> {
+    db.delete_model_group(name)?;
+    crate::state_version::bump("pool");
+    Ok(())
+}
+
+pub fn replace_model_group_entries(
+    db: &Database,
+    params: ReplaceModelGroupEntriesParams,
+) -> Result<(), AppError> {
+    db.replace_model_group_entries(&params.name, &params.entry_ids)?;
+    crate::state_version::bump("pool");
+    Ok(())
 }
 
 /// Update the group_name for a specific entry.
