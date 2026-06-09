@@ -531,6 +531,10 @@ pub fn list_model_groups(db: &Database) -> Result<Vec<ModelGroupConfig>, AppErro
     db.list_model_groups()
 }
 
+pub fn list_model_group_entry_ids(db: &Database, name: &str) -> Result<Vec<String>, AppError> {
+    db.list_model_group_entry_ids(name)
+}
+
 pub fn upsert_model_group(
     db: &Database,
     params: UpsertModelGroupParams,

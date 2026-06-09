@@ -111,6 +111,15 @@ fn is_auto_group(name: &str) -> bool {
     normalize_group_key(name) == "auto"
 }
 
+fn normalize_group_name(name: &str) -> String {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        "auto".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 fn row_to_entry(row: &rusqlite::Row<'_>, include_channel: bool) -> rusqlite::Result<ApiEntry> {
     let enabled: i32 = row.get(5)?;
     let response_ms: String = row.get(11).unwrap_or_default();
@@ -162,6 +171,14 @@ const ENTRY_SELECT_WITH_CHANNEL: &str =
         FROM api_entries e
         LEFT JOIN channels c ON e.channel_id = c.id";
 
+const ROUTING_ENTRY_SELECT_WITH_GROUP: &str =
+    "SELECT e.id, e.channel_id, e.model, e.display_name, e.sort_index, e.enabled,
+        e.cooldown_until, e.created_at, e.updated_at, c.name, c.api_type,
+        e.response_ms, e.provider_logo, e.release_date, e.model_meta_zh, e.model_meta_en, m.group_name, e.score
+        FROM api_entries e
+        LEFT JOIN channels c ON e.channel_id = c.id
+        INNER JOIN model_group_entries m ON m.entry_id = e.id";
+
 impl Database {
     pub fn list_entries(&self) -> Result<Vec<ApiEntry>, AppError> {
         let conn = lock_conn!(self.conn);
@@ -193,7 +210,13 @@ impl Database {
         let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
         if let Some(gn) = group_name {
-            where_clauses.push(format!("e.group_name = ?{}", params.len() + 1));
+            where_clauses.push(format!(
+                "EXISTS (
+                    SELECT 1 FROM model_group_entries m
+                    WHERE m.entry_id = e.id AND LOWER(m.group_name) = LOWER(?{})
+                )",
+                params.len() + 1
+            ));
             params.push(Box::new(gn.to_string()));
         }
         if let Some(cid) = channel_id {
@@ -289,6 +312,11 @@ impl Database {
                 group_name,
                 now
             ],
+        )?;
+        conn.execute(
+            "INSERT OR IGNORE INTO model_group_entries (group_name, entry_id, sort_index, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?4)",
+            rusqlite::params![normalize_group_name(group_name), id, sort_index, now],
         )?;
 
         Ok(ApiEntry {
@@ -405,18 +433,28 @@ impl Database {
     }
 
     pub fn delete_entries_by_channel(&self, channel_id: &str) -> Result<(), AppError> {
-        let conn = lock_conn!(self.conn);
-        conn.execute(
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn.transaction()?;
+        tx.execute(
+            "DELETE FROM model_group_entries
+             WHERE entry_id IN (SELECT id FROM api_entries WHERE channel_id = ?1)",
+            [channel_id],
+        )?;
+        tx.execute(
             "DELETE FROM api_entries WHERE channel_id = ?1",
             [channel_id],
         )?;
+        tx.commit()?;
         Ok(())
     }
 
     pub fn delete_entry(&self, id: &str) -> Result<(), AppError> {
-        let conn = lock_conn!(self.conn);
-        conn.execute("DELETE FROM api_entries WHERE id = ?1", [id])
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn.transaction()?;
+        tx.execute("DELETE FROM model_group_entries WHERE entry_id = ?1", [id])?;
+        tx.execute("DELETE FROM api_entries WHERE id = ?1", [id])
             .map_err(|e| AppError::Database(e.to_string()))?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -481,11 +519,18 @@ impl Database {
     }
 
     pub fn disable_entries_for_channel(&self, channel_id: &str) -> Result<(), AppError> {
-        let conn = lock_conn!(self.conn);
-        conn.execute(
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn.transaction()?;
+        tx.execute(
+            "DELETE FROM model_group_entries
+             WHERE entry_id IN (SELECT id FROM api_entries WHERE channel_id = ?1)",
+            [channel_id],
+        )?;
+        tx.execute(
             "DELETE FROM api_entries WHERE channel_id = ?1",
             [channel_id],
         )?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -593,6 +638,11 @@ impl Database {
                         alias,
                     ],
                 )?;
+                conn.execute(
+                    "INSERT OR IGNORE INTO model_group_entries (group_name, entry_id, sort_index, created_at, updated_at)
+                     VALUES ('auto', ?1, ?2, ?3, ?3)",
+                    rusqlite::params![id, next_sort, now],
+                )?;
                 next_sort += 1;
             } else if let Some(meta) = meta {
                 let alias = if meta.display_name.is_empty() {
@@ -622,6 +672,13 @@ impl Database {
         for model in &current_models {
             if !selected_models.contains(model) {
                 conn.execute(
+                    "DELETE FROM model_group_entries
+                     WHERE entry_id IN (
+                        SELECT id FROM api_entries WHERE channel_id = ?1 AND model = ?2
+                     )",
+                    rusqlite::params![channel_id, model],
+                )?;
+                conn.execute(
                     "DELETE FROM api_entries WHERE channel_id = ?1 AND model = ?2",
                     rusqlite::params![channel_id, model],
                 )?;
@@ -635,7 +692,7 @@ impl Database {
     /// Includes disabled entries; entry.enabled only means "enter AUTO", not "usable".
     pub fn get_entries_for_routing(&self) -> Result<Vec<ApiEntry>, AppError> {
         let conn = lock_conn!(self.conn);
-        let sql = format!("{ENTRY_SELECT_WITH_CHANNEL} ORDER BY e.sort_index, e.created_at");
+        let sql = format!("{ROUTING_ENTRY_SELECT_WITH_GROUP} ORDER BY e.sort_index, e.created_at");
         let mut stmt = conn.prepare(&sql)?;
 
         let entries = stmt
@@ -651,8 +708,9 @@ impl Database {
     pub fn get_enabled_entries_for_auto(&self) -> Result<Vec<ApiEntry>, AppError> {
         let conn = lock_conn!(self.conn);
         let sql = format!(
-            "{ENTRY_SELECT_WITH_CHANNEL}
+            "{ROUTING_ENTRY_SELECT_WITH_GROUP}
             WHERE e.enabled = 1 AND c.enabled = 1
+            AND LOWER(m.group_name) = 'auto'
             AND (e.cooldown_until IS NULL OR e.cooldown_until <= strftime('%s','now'))
             ORDER BY e.sort_index, e.created_at"
         );
@@ -697,9 +755,9 @@ impl Database {
     ) -> Result<Vec<ApiEntry>, AppError> {
         let conn = lock_conn!(self.conn);
         let sql = format!(
-            "{ENTRY_SELECT_WITH_CHANNEL}
+            "{ROUTING_ENTRY_SELECT_WITH_GROUP}
         WHERE e.enabled = 1 AND c.enabled = 1
-        AND e.group_name = ?1
+        AND LOWER(m.group_name) = LOWER(?1)
         AND (e.cooldown_until IS NULL OR e.cooldown_until <= strftime('%s','now'))
         ORDER BY e.sort_index, e.created_at"
         );
@@ -717,9 +775,16 @@ impl Database {
     pub fn update_entry_group(&self, id: &str, group_name: &str) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
         let now = chrono::Utc::now().timestamp();
+        let group_name = normalize_group_name(group_name);
         conn.execute(
             "UPDATE api_entries SET group_name = ?1, updated_at = ?2 WHERE id = ?3",
-            rusqlite::params![group_name, now, id],
+            rusqlite::params![&group_name, now, id],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "INSERT OR IGNORE INTO model_group_entries (group_name, entry_id, sort_index, created_at, updated_at)
+             SELECT ?1, id, sort_index, ?2, ?2 FROM api_entries WHERE id = ?3",
+            rusqlite::params![&group_name, now, id],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
@@ -741,9 +806,10 @@ impl Database {
         let mut entry_counts: HashMap<String, (String, i64, i64)> = HashMap::new();
         {
             let mut stmt = conn.prepare(
-                "SELECT group_name, enabled
-                 FROM api_entries
-                 WHERE group_name IS NOT NULL AND TRIM(group_name) != ''",
+                "SELECT m.group_name, e.enabled
+                 FROM model_group_entries m
+                 INNER JOIN api_entries e ON e.id = m.entry_id
+                 WHERE m.group_name IS NOT NULL AND TRIM(m.group_name) != ''",
             )?;
             let rows = stmt.query_map([], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)? != 0))
@@ -787,13 +853,14 @@ impl Database {
                     updated_at: row.get(7)?,
                 })
             })?;
-            rows
-                .collect::<Result<Vec<_>, _>>()
+            rows.collect::<Result<Vec<_>, _>>()
                 .map_err(|e| AppError::Database(e.to_string()))?
         };
 
-        let mut configured_keys: Vec<String> =
-            groups.iter().map(|group| normalize_group_key(&group.name)).collect();
+        let mut configured_keys: Vec<String> = groups
+            .iter()
+            .map(|group| normalize_group_key(&group.name))
+            .collect();
         if !configured_keys.iter().any(|key| key == "auto") {
             groups.push(ModelGroupConfig {
                 name: "auto".to_string(),
@@ -844,7 +911,11 @@ impl Database {
             b.priority
                 .cmp(&a.priority)
                 .then_with(|| a.sort_index.cmp(&b.sort_index))
-                .then_with(|| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()))
+                .then_with(|| {
+                    a.name
+                        .to_ascii_lowercase()
+                        .cmp(&b.name.to_ascii_lowercase())
+                })
         });
         Ok(groups)
     }
@@ -931,7 +1002,11 @@ impl Database {
                 "Group name cannot be empty".to_string(),
             ));
         }
-        let enabled = if is_auto_group(normalized) { true } else { enabled };
+        let enabled = if is_auto_group(normalized) {
+            true
+        } else {
+            enabled
+        };
         let existing = self
             .list_model_groups()?
             .into_iter()
@@ -960,6 +1035,26 @@ impl Database {
         let mut conn = lock_conn!(self.conn);
         let tx = conn.transaction()?;
         let now = chrono::Utc::now().timestamp();
+        let entry_ids = {
+            let mut stmt = tx.prepare(
+                "SELECT entry_id FROM model_group_entries WHERE LOWER(group_name) = LOWER(?1)",
+            )?;
+            let ids = stmt
+                .query_map([name], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            ids
+        };
+        for entry_id in &entry_ids {
+            tx.execute(
+                "INSERT OR IGNORE INTO model_group_entries (group_name, entry_id, sort_index, created_at, updated_at)
+                 SELECT 'auto', id, sort_index, ?1, ?1 FROM api_entries WHERE id = ?2",
+                rusqlite::params![now, entry_id],
+            )?;
+        }
+        tx.execute(
+            "DELETE FROM model_group_entries WHERE LOWER(group_name) = LOWER(?1)",
+            [name],
+        )?;
         tx.execute(
             "UPDATE api_entries
              SET group_name = 'auto', updated_at = ?1
@@ -997,31 +1092,44 @@ impl Database {
         let mut conn = lock_conn!(self.conn);
         let tx = conn.transaction()?;
         let now = chrono::Utc::now().timestamp();
-        if !is_auto_group(name) {
-            tx.execute(
-                "UPDATE api_entries
-                 SET group_name = 'auto', updated_at = ?1
-                 WHERE LOWER(group_name) = LOWER(?2)",
-                rusqlite::params![now, name],
-            )?;
-        }
+        let stored_name = tx
+            .query_row(
+                "SELECT name FROM model_groups WHERE LOWER(name) = LOWER(?1)",
+                [name],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap_or_else(|_| normalize_group_name(name));
+        tx.execute(
+            "DELETE FROM model_group_entries WHERE LOWER(group_name) = LOWER(?1)",
+            [name],
+        )?;
         for entry_id in entry_ids {
             tx.execute(
-                "UPDATE api_entries
-                 SET group_name = ?1, updated_at = ?2
-                 WHERE id = ?3",
-                rusqlite::params![name, now, entry_id],
+                "INSERT OR IGNORE INTO model_group_entries (group_name, entry_id, sort_index, created_at, updated_at)
+                 SELECT ?1, id, sort_index, ?2, ?2 FROM api_entries WHERE id = ?3",
+                rusqlite::params![&stored_name, now, entry_id],
             )?;
         }
         tx.commit()?;
         Ok(())
     }
 
-    pub fn get_disabled_model_group_names(&self) -> Result<Vec<String>, AppError> {
+    pub fn list_model_group_entry_ids(&self, name: &str) -> Result<Vec<String>, AppError> {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn.prepare(
-            "SELECT name FROM model_groups WHERE enabled = 0 AND LOWER(name) != 'auto'",
+            "SELECT entry_id FROM model_group_entries WHERE LOWER(group_name) = LOWER(?1)",
         )?;
+        let ids = stmt
+            .query_map([name.trim()], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(ids)
+    }
+
+    pub fn get_disabled_model_group_names(&self) -> Result<Vec<String>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let mut stmt = conn
+            .prepare("SELECT name FROM model_groups WHERE enabled = 0 AND LOWER(name) != 'auto'")?;
         let groups = stmt
             .query_map([], |row| row.get::<_, String>(0))?
             .collect::<Result<Vec<_>, _>>()

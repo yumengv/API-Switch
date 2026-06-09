@@ -468,6 +468,11 @@ export const apiAdapter: ApiAdapter = {
         ? tauriCmd<ModelGroupConfig[]>('list_model_groups')
         : webRequest<ModelGroupConfig[]>('GET', '/pool/model-groups'),
 
+    listModelGroupEntryIds: (name) =>
+      useTauri()
+        ? tauriCmd<string[]>('list_model_group_entry_ids', { name })
+        : webRequest<string[]>('GET', `/pool/model-groups/${encodeURIComponent(name)}/entries`),
+
     upsertModelGroup: (params) => {
       const payload = {
         name: params.name,

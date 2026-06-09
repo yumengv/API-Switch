@@ -51,11 +51,8 @@ function parsePriorityDraft(value: string | undefined, fallback: number) {
   return Number.isFinite(parsed) ? Math.round(parsed) : fallback;
 }
 
-function sortEntriesForDialog(entries: ApiEntry[], selectedIds: Set<string>) {
+function sortEntriesForDialog(entries: ApiEntry[]) {
   return [...entries].sort((a, b) => {
-    const selectedA = selectedIds.has(a.id);
-    const selectedB = selectedIds.has(b.id);
-    if (selectedA !== selectedB) return selectedA ? -1 : 1;
     return a.sort_index - b.sort_index;
   });
 }
@@ -88,6 +85,7 @@ export function GroupManagement() {
       queryClient.invalidateQueries({ queryKey: ["entries"] }),
       queryClient.invalidateQueries({ queryKey: ["groups"] }),
       queryClient.invalidateQueries({ queryKey: ["pool-groups"] }),
+      queryClient.invalidateQueries({ queryKey: ["model-group-entry-ids"] }),
     ]);
   };
 
@@ -376,22 +374,34 @@ function ModelSelectionDialog({
   const [query, setQuery] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [priorityDrafts, setPriorityDrafts] = useState<Record<string, string>>({});
+  const groupName = group?.name ?? "";
+
+  const memberIdsQuery = useQuery({
+    queryKey: ["model-group-entry-ids", groupName],
+    queryFn: () => adapter.pool.listModelGroupEntryIds(groupName),
+    enabled: !!group,
+  });
 
   useEffect(() => {
     if (!group) return;
+    setSelectedIds(new Set());
+    setPriorityDrafts({});
+    setQuery("");
+  }, [group?.name]);
+
+  useEffect(() => {
+    if (!group || !memberIdsQuery.data) return;
+    const memberIds = new Set(memberIdsQuery.data);
     const selectedEntries = entries
-      .filter((entry) => entry.group_name && entry.group_name.toLowerCase() === group.name.toLowerCase());
-    const next = new Set(
-      selectedEntries.map((entry) => entry.id)
-    );
+      .filter((entry) => memberIds.has(entry.id));
+    const next = new Set(selectedEntries.map((entry) => entry.id));
     const nextDrafts: Record<string, string> = {};
     for (const entry of selectedEntries) {
       nextDrafts[entry.id] = String(priorityFromSortIndex(entry.sort_index));
     }
     setSelectedIds(next);
     setPriorityDrafts(nextDrafts);
-    setQuery("");
-  }, [entries, group]);
+  }, [entries, group, memberIdsQuery.data]);
 
   const selectedEntries = useMemo(
     () =>
@@ -429,13 +439,13 @@ function ModelSelectionDialog({
 
   const visibleEntries = useMemo(() => {
     const term = query.trim().toLowerCase();
-    const ordered = sortEntriesForDialog(entries, selectedIds);
+    const ordered = sortEntriesForDialog(entries);
     if (!term) return ordered;
     return ordered.filter((entry) => {
       const haystack = `${entry.model} ${entry.display_name} ${entry.channel_name || ""}`.toLowerCase();
       return haystack.includes(term);
     });
-  }, [entries, query, selectedIds]);
+  }, [entries, query]);
 
   const toggleEntry = (entry: ApiEntry, checked: boolean) => {
     setSelectedIds((prev) => {

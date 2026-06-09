@@ -195,6 +195,7 @@ fn run_gui(runtime_mode: RuntimeMode) {
             commands::pool::update_entry_response_ms,
             commands::pool::get_all_groups,
             commands::pool::list_model_groups,
+            commands::pool::list_model_group_entry_ids,
             commands::pool::upsert_model_group,
             commands::pool::update_model_group_enabled,
             commands::pool::delete_model_group,

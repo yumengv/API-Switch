@@ -121,7 +121,8 @@ pub fn build_admin_router(state: AdminState) -> Router {
         )
         .route(
             "/admin/pool/model-groups/:name/entries",
-            put(pool_handlers::replace_model_group_entries),
+            get(pool_handlers::list_model_group_entry_ids)
+                .put(pool_handlers::replace_model_group_entries),
         )
         .route(
             "/admin/pool/:id/display-name",

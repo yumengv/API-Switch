@@ -151,6 +151,11 @@ impl ServerApi {
         pool_service::list_model_groups(&self.state().db)
     }
 
+    /// 获取指定模型分组的成员条目 ID。
+    pub fn list_model_group_entry_ids(&self, name: &str) -> Result<Vec<String>, AppError> {
+        pool_service::list_model_group_entry_ids(&self.state().db, name)
+    }
+
     /// 新增或更新模型分组配置。
     pub fn upsert_model_group(
         &self,

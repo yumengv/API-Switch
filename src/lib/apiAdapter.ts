@@ -36,6 +36,7 @@ export interface ApiAdapter {
     backfillCatalogMeta(items: { entryId: string; catalogProvider: string; catalogModelId: string }[]): Promise<void>;
     getGroups(): Promise<string[]>;
     listModelGroups(): Promise<ModelGroupConfig[]>;
+    listModelGroupEntryIds(name: string): Promise<string[]>;
     upsertModelGroup(params: { name: string; description?: string; enabled?: boolean; priority?: number }): Promise<ModelGroupConfig>;
     updateModelGroupEnabled(name: string, enabled: boolean): Promise<void>;
     deleteModelGroup(name: string): Promise<void>;

@@ -248,6 +248,16 @@ pub fn list_model_groups(
 }
 
 #[tauri::command]
+pub fn list_model_group_entry_ids(
+    app: crate::AppEventHandle,
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<Vec<String>, AppError> {
+    let api = ServerApi::new(state.inner().clone(), app);
+    api.list_model_group_entry_ids(&name)
+}
+
+#[tauri::command]
 pub async fn upsert_model_group(
     app: tauri::AppHandle,
     state: State<'_, AppState>,

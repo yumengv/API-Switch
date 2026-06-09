@@ -96,6 +96,14 @@ fn available_entries(
     available
 }
 
+fn dedup_entries_by_id(entries: Vec<ApiEntry>) -> Vec<ApiEntry> {
+    let mut seen = HashSet::new();
+    entries
+        .into_iter()
+        .filter(|entry| seen.insert(entry.id.clone()))
+        .collect()
+}
+
 /// Resolve which entries to try for a given model request.
 /// Returns an ordered list of entries to attempt (failover in order).
 ///
@@ -167,7 +175,7 @@ pub async fn resolve_with_disabled_groups(
         .cloned()
         .collect();
     if !exact_model_matches.is_empty() {
-        return exact_model_matches;
+        return dedup_entries_by_id(exact_model_matches);
     }
 
     // 2.7 Exact alias (display_name) match (case-insensitive)
@@ -180,7 +188,7 @@ pub async fn resolve_with_disabled_groups(
         .cloned()
         .collect();
     if !alias_matches.is_empty() {
-        return alias_matches;
+        return dedup_entries_by_id(alias_matches);
     }
 
     let model_matches: Vec<ApiEntry> = all_available
@@ -194,7 +202,7 @@ pub async fn resolve_with_disabled_groups(
         .cloned()
         .collect();
     if !model_matches.is_empty() {
-        return model_matches;
+        return dedup_entries_by_id(model_matches);
     }
 
     let auto_available = available_entries(auto_entries, &breakers);

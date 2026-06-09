@@ -235,6 +235,15 @@ pub async fn list_model_groups(
     Ok(Json(groups))
 }
 
+/// GET /admin/pool/model-groups/:name/entries - List model group member entry IDs.
+pub async fn list_model_group_entry_ids(
+    State(state): State<AdminState>,
+    Path(name): Path<String>,
+) -> Result<Json<Vec<String>>, AdminError> {
+    let ids = state.server_api()?.list_model_group_entry_ids(&name)?;
+    Ok(Json(ids))
+}
+
 /// POST /admin/pool/model-groups - Create or update a model group.
 pub async fn upsert_model_group(
     State(state): State<AdminState>,

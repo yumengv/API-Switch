@@ -327,6 +327,7 @@ DAO 层负责 SQLite 持久化访问。主要职责包括：
 | `channels` | API 渠道 | id, name, api_type, base_url, api_key, available_models(JSON), selected_models(JSON), enabled |
 | `api_entries` | 路由池条目 / 对外可见模型 | id, channel_id, model, display_name, group_name, sort_index, enabled, cooldown_until, response_ms, score, provider_logo, release_date, model_meta_zh/en |
 | `model_groups` | 模型分组配置 | name, description, enabled, priority, sort_index, is_system |
+| `model_group_entries` | 模型分组成员关系 | group_name, entry_id, sort_index, created_at, updated_at |
 | `access_keys` | 访问密钥 | id, name, key(UUID), enabled |
 | `usage_logs` | 请求日志 | 25+ 字段，含 token 统计、延迟、错误信息 |
 | `config` | 全局配置 | KV 存储 |
@@ -359,7 +360,7 @@ API 池条目是运行时路由的事实源，核心字段包括：
 - 响应时间 `response_ms`
 - 模型目录元信息
 
-路由、测速、启用/禁用和排序都以 `api_entries` 为准。`group_name` 记录条目所属分组；模型管理页拖拽排序和模型分组页排序数字最终都写入同一条目的 `sort_index`。
+路由、测速、启用/禁用和排序都以 `api_entries` 为准。`group_name` 保留为旧数据兼容和模型管理页主分组显示；模型分组的真实成员关系由 `model_group_entries` 维护。模型管理页拖拽排序和模型分组页排序数字最终都写入同一条目的 `sort_index`。
 
 ### 6.4 model_groups
 
@@ -381,7 +382,19 @@ API 池条目是运行时路由的事实源，核心字段包括：
 
 历史分组会以启用状态返回，确保升级后已有路由不被静默关闭。
 
-### 6.5 usage_logs
+### 6.5 model_group_entries
+
+`model_group_entries` 是模型分组的多对多成员表。一个 `api_entries.id` 可以同时加入多个 `group_name`，因此同一个上游模型可以暴露到多个业务分组中。
+
+关键规则：
+
+- 启动迁移时，如果该表为空，会从旧的 `api_entries.group_name` 导入初始成员关系。
+- 新增模型条目时会写入默认分组成员关系，默认是 `auto`。
+- 保存某个分组时只替换该分组自己的成员，不删除该模型在其他分组里的成员关系。
+- 删除普通分组时，相关成员关系会删除，并给这些条目补回 `auto` 成员关系。
+- 路由时会按该表展开分组候选；按具体模型名或别名请求时会按 `api_entries.id` 去重，避免同一条目因属于多个分组而重复尝试。
+
+### 6.6 usage_logs
 
 使用日志记录每次代理请求的运行结果，常用字段包括：
 
@@ -398,11 +411,11 @@ API 池条目是运行时路由的事实源，核心字段包括：
 
 `other` 用 JSON 保存结构化补充信息，例如 `requested_model`、`resolved_model`、`first_token_ms`、`status_code`、`attempt_path`、`stream_end_reason` 等。
 
-### 6.6 access_keys
+### 6.7 access_keys
 
 Access Key 用于客户端访问代理时的身份识别和可选鉴权。关闭强制校验时，Access Key 仍可用于日志身份追踪。
 
-### 6.7 settings
+### 6.8 settings
 
 设置表保存代理、管理端、冷却、UI 和运行行为配置。Web Admin 设置更新带版本号，用于处理多页面或多进程修改冲突。
 
@@ -501,14 +514,15 @@ API 池支持：
 
 ### 8.2 模型分组管理
 
-模型分组是路由层的对外模型别名集合。配置入口位于「模型分组」，由 `model_groups` 表保存分组元信息，由 `api_entries.group_name` 保存条目归属。
+模型分组是路由层的对外模型别名集合。配置入口位于「模型分组」，由 `model_groups` 表保存分组元信息，由 `model_group_entries` 保存条目成员关系。
 
 关键规则：
 
 - `auto` 是系统分组，不能删除，始终启用。
 - 普通分组可以创建、编辑描述、启用/禁用和删除。
 - 删除普通分组会把组内条目移回 `auto`。
-- 选择模型时通过 `replace_model_group_entries()` 批量重写条目 `group_name`。
+- 同一个条目可以加入多个普通分组。
+- 选择模型时通过 `replace_model_group_entries()` 只替换目标分组的成员关系，不影响其他分组。
 - 分组页排序数字是给使用者看的优先级数字，数字越大越靠前；保存时前端换算为内部 `sort_index` 写回条目。
 - 模型管理页拖拽排序和模型分组页排序数字共用 `api_entries.sort_index`，因此任一页面调整后另一个页面应同步显示。
 

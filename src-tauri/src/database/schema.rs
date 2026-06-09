@@ -113,6 +113,7 @@ pub fn create_tables(conn: &Connection) -> Result<(), AppError> {
     ensure_usage_log_columns(conn)?;
     ensure_channel_columns(conn)?;
     ensure_default_model_groups(conn)?;
+    ensure_model_group_entries(conn)?;
 
     // Migrate api_type values in channels table
     // custom -> openai, claude -> anthropic
@@ -260,13 +261,48 @@ fn ensure_channel_columns(conn: &Connection) -> Result<(), AppError> {
 }
 
 fn ensure_model_group_columns(conn: &Connection) -> Result<(), AppError> {
-    ensure_column(conn, "model_groups", "description", "TEXT NOT NULL DEFAULT ''")?;
-    ensure_column(conn, "model_groups", "enabled", "INTEGER NOT NULL DEFAULT 1")?;
-    ensure_column(conn, "model_groups", "priority", "INTEGER NOT NULL DEFAULT 0")?;
-    ensure_column(conn, "model_groups", "sort_index", "INTEGER NOT NULL DEFAULT 0")?;
-    ensure_column(conn, "model_groups", "is_system", "INTEGER NOT NULL DEFAULT 0")?;
-    ensure_column(conn, "model_groups", "created_at", "INTEGER NOT NULL DEFAULT 0")?;
-    ensure_column(conn, "model_groups", "updated_at", "INTEGER NOT NULL DEFAULT 0")?;
+    ensure_column(
+        conn,
+        "model_groups",
+        "description",
+        "TEXT NOT NULL DEFAULT ''",
+    )?;
+    ensure_column(
+        conn,
+        "model_groups",
+        "enabled",
+        "INTEGER NOT NULL DEFAULT 1",
+    )?;
+    ensure_column(
+        conn,
+        "model_groups",
+        "priority",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    ensure_column(
+        conn,
+        "model_groups",
+        "sort_index",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    ensure_column(
+        conn,
+        "model_groups",
+        "is_system",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    ensure_column(
+        conn,
+        "model_groups",
+        "created_at",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    ensure_column(
+        conn,
+        "model_groups",
+        "updated_at",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
     Ok(())
 }
 
@@ -279,6 +315,52 @@ fn ensure_default_model_groups(conn: &Connection) -> Result<(), AppError> {
         [now],
     )
     .map_err(|e| AppError::Database(e.to_string()))?;
+    Ok(())
+}
+
+fn ensure_model_group_entries(conn: &Connection) -> Result<(), AppError> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS model_group_entries (
+            group_name TEXT NOT NULL,
+            entry_id TEXT NOT NULL,
+            sort_index INTEGER NOT NULL DEFAULT 0,
+            created_at INTEGER NOT NULL DEFAULT 0,
+            updated_at INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (group_name, entry_id),
+            FOREIGN KEY (entry_id) REFERENCES api_entries(id) ON DELETE CASCADE
+        )",
+        [],
+    )
+    .map_err(|e| AppError::Database(e.to_string()))?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_model_group_entries_entry_id
+         ON model_group_entries(entry_id)",
+        [],
+    )
+    .map_err(|e| AppError::Database(e.to_string()))?;
+
+    let existing: i64 = conn
+        .query_row("SELECT COUNT(*) FROM model_group_entries", [], |row| {
+            row.get(0)
+        })
+        .unwrap_or(0);
+
+    if existing == 0 {
+        conn.execute(
+            "INSERT OR IGNORE INTO model_group_entries (group_name, entry_id, sort_index, created_at, updated_at)
+             SELECT
+                COALESCE(NULLIF(TRIM(group_name), ''), 'auto'),
+                id,
+                sort_index,
+                created_at,
+                updated_at
+             FROM api_entries",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    }
+
     Ok(())
 }
 
