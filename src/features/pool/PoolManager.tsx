@@ -149,6 +149,10 @@ function getModelScoreCacheKey(entry: ApiEntry): string {
   return `${entry.model.trim().toLowerCase()}::${entry.release_date || ''}::${entry.display_name || ''}`;
 }
 
+function getChannelModelKey(entry: ApiEntry): string {
+  return `${entry.channel_id}::${entry.model.trim().toLowerCase()}`;
+}
+
 function calculateModelRawScore(entry: ApiEntry): number {
   return releaseRawScore(entry.release_date) * 0.4 + tierRawScore(entry) * 0.4 + descriptionRawScore(entry) * 0.2;
 }
@@ -160,6 +164,8 @@ type PoolTestOutcome = {
   success: boolean;
   latencyMs: number | null;
   modelScore: number;
+  statusCode?: number;
+  disabledScope?: string;
   errorDetail?: string;
 };
 
@@ -1001,16 +1007,23 @@ const handleToggleIntent = useCallback(async (entry: ApiEntry, enabled: boolean,
       scopedEntries.push(...nextPage.items);
     }
     if (!scopedEntries.length) return;
+    const uniqueEntries = Array.from(
+      scopedEntries.reduce((map, entry) => {
+        const key = getChannelModelKey(entry);
+        if (!map.has(key)) map.set(key, entry);
+        return map;
+      }, new Map<string, ApiEntry>()).values()
+    );
     const results: Record<string, string> = {};
     const errorDetails: Record<string, string> = {};
     const outcomes: PoolTestOutcome[] = [];
     const modelScoreCache = new Map<string, number>();
     let completed = 0;
-    const total = scopedEntries.length;
+    const total = uniqueEntries.length;
     setTestProgress({ current: 0, total });
     setTestingEntryIds(new Set());
 
-    await runConcurrent(scopedEntries, POOL_TEST_CONCURRENCY, async (entry) => {
+    await runConcurrent(uniqueEntries, POOL_TEST_CONCURRENCY, async (entry) => {
       setTestingEntryIds((prev) => {
         const next = new Set(prev);
         next.add(entry.id);
@@ -1038,6 +1051,8 @@ const handleToggleIntent = useCallback(async (entry: ApiEntry, enabled: boolean,
           success,
           latencyMs: result.latency_ms,
           modelScore,
+          statusCode: result.status_code,
+          disabledScope: result.disabled_scope,
           errorDetail: result.error_detail,
         });
       } catch (err) {
@@ -1081,6 +1096,7 @@ const handleToggleIntent = useCallback(async (entry: ApiEntry, enabled: boolean,
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: entriesQueryKey }),
       queryClient.invalidateQueries({ queryKey: ["entries"] }),
+      queryClient.invalidateQueries({ queryKey: ["channels", "all"] }),
       queryClient.invalidateQueries({ queryKey: ["groups"] }),
       queryClient.invalidateQueries({ queryKey: ["model-groups"] }),
     ]);

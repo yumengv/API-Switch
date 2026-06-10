@@ -116,6 +116,10 @@ pub struct TestLatencyResult {
     pub response_ms: String,
     pub score: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_code: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disabled_scope: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error_detail: Option<String>,
 }
 
@@ -277,6 +281,72 @@ fn truncate_for_log(value: &str, max_chars: usize) -> String {
     value.chars().take(max_chars).collect::<String>()
 }
 
+fn should_disable_channel_for_status(status_code: u16) -> bool {
+    matches!(status_code, 502 | 503 | 529)
+}
+
+fn should_disable_model_for_status(status_code: u16) -> bool {
+    matches!(status_code, 400 | 401 | 403 | 404 | 410 | 422)
+}
+
+fn mark_test_failure(
+    db: &Database,
+    entry_id: &str,
+    channel_id: &str,
+    status_code: u16,
+) -> Option<String> {
+    if should_disable_channel_for_status(status_code) {
+        let _ = db.disable_channel(channel_id);
+        crate::state_version::bump("channel");
+        Some("channel".to_string())
+    } else if should_disable_model_for_status(status_code) {
+        let _ = db.toggle_entry(entry_id, false);
+        Some("model".to_string())
+    } else {
+        None
+    }
+}
+
+fn mark_test_failure_from_detail(
+    db: &Database,
+    entry_id: &str,
+    channel_id: &str,
+    detail: &str,
+) -> Option<String> {
+    let lower = detail.to_ascii_lowercase();
+    if ["502", "503", "529", "bad gateway", "service unavailable", "upstream unavailable"]
+        .iter()
+        .any(|needle| lower.contains(needle))
+    {
+        return mark_test_failure(db, entry_id, channel_id, 502);
+    }
+    if [
+        "400",
+        "401",
+        "403",
+        "404",
+        "410",
+        "422",
+        "forbidden",
+        "unauthorized",
+        "permission denied",
+        "access denied",
+        "not authorized",
+        "invalid api key",
+        "invalid_api_key",
+        "invalid token",
+        "model not found",
+        "model_not_found",
+        "does not exist",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+    {
+        return mark_test_failure(db, entry_id, channel_id, 400);
+    }
+    None
+}
+
 /// Test latency for a specific entry.
 pub async fn test_entry_latency(
     db: &Database,
@@ -322,7 +392,7 @@ pub async fn test_entry_latency(
             let message = format!("HTTP client: {e}");
             let _ = db.update_entry_response_ms(entry_id, "X");
             let new_score = update_score("X", false);
-            let _ = db.toggle_entry(entry_id, false);
+            let disabled_scope = mark_test_failure(db, entry_id, &entry.channel_id, 502);
             insert_test_usage_log(
                 db,
                 None,
@@ -349,6 +419,8 @@ pub async fn test_entry_latency(
                 status: "failed:client_build_error".to_string(),
                 response_ms: "X".to_string(),
                 score: new_score,
+                status_code: Some(502),
+                disabled_scope,
                 error_detail: Some(message),
             });
         }
@@ -365,7 +437,7 @@ pub async fn test_entry_latency(
             let latency_ms = start.elapsed().as_millis() as i64;
             let message = format!("network_error: {e}");
             let _ = db.update_entry_response_ms(entry_id, "X");
-            let _ = db.toggle_entry(entry_id, false);
+            let disabled_scope = mark_test_failure(db, entry_id, &entry.channel_id, 502);
             insert_test_usage_log(
                 db,
                 None,
@@ -392,6 +464,8 @@ pub async fn test_entry_latency(
                 status: "failed:network_error".to_string(),
                 response_ms: "X".to_string(),
                 score: update_score("X", false),
+                status_code: Some(502),
+                disabled_scope,
                 error_detail: Some(message),
             });
         }
@@ -401,7 +475,8 @@ pub async fn test_entry_latency(
     let status = response.status();
 
     if !status.is_success() {
-        let status_code = status.as_u16() as i32;
+        let status_code_u16 = status.as_u16();
+        let status_code = status_code_u16 as i32;
         let error_preview = response.text().await.unwrap_or_default();
         let error_preview = truncate_for_log(&error_preview, 1000);
         let error_detail = if error_preview.is_empty() {
@@ -410,7 +485,7 @@ pub async fn test_entry_latency(
             format!("http_{}: {}", status.as_u16(), error_preview)
         };
         let _ = db.update_entry_response_ms(entry_id, "X");
-        let _ = db.toggle_entry(entry_id, false);
+        let disabled_scope = mark_test_failure(db, entry_id, &entry.channel_id, status_code_u16);
         insert_test_usage_log(
             db,
             None,
@@ -437,6 +512,8 @@ pub async fn test_entry_latency(
             status: "failed:http_error".to_string(),
             response_ms: "X".to_string(),
             score: update_score("X", false),
+            status_code: Some(status_code_u16),
+            disabled_scope,
             error_detail: Some(error_detail),
         });
     }
@@ -446,7 +523,7 @@ pub async fn test_entry_latency(
         Err(e) => {
             let message = format!("response_read_error: {e}");
             let _ = db.update_entry_response_ms(entry_id, "X");
-            let _ = db.toggle_entry(entry_id, false);
+            let disabled_scope = mark_test_failure(db, entry_id, &entry.channel_id, 502);
             insert_test_usage_log(
                 db,
                 None,
@@ -473,6 +550,8 @@ pub async fn test_entry_latency(
                 status: "failed:response_error".to_string(),
                 response_ms: "X".to_string(),
                 score: update_score("X", false),
+                status_code: Some(502),
+                disabled_scope,
                 error_detail: Some(message),
             });
         }
@@ -480,7 +559,7 @@ pub async fn test_entry_latency(
 
     if body.trim().is_empty() {
         let _ = db.update_entry_response_ms(entry_id, "X");
-        let _ = db.toggle_entry(entry_id, false);
+        let disabled_scope = mark_test_failure(db, entry_id, &entry.channel_id, 400);
         insert_test_usage_log(
             db,
             None,
@@ -508,6 +587,8 @@ pub async fn test_entry_latency(
             status: "failed:empty_response".to_string(),
             response_ms: "X".to_string(),
             score: update_score("X", false),
+            status_code: Some(status.as_u16()),
+            disabled_scope,
             error_detail: Some("empty_response".to_string()),
         });
     }
@@ -517,7 +598,12 @@ pub async fn test_entry_latency(
         Err(message) => {
             let error_preview = truncate_for_log(&body, 1000);
             let _ = db.update_entry_response_ms(entry_id, "X");
-            let _ = db.toggle_entry(entry_id, false);
+            let disabled_scope = mark_test_failure_from_detail(
+                db,
+                entry_id,
+                &entry.channel_id,
+                &message,
+            );
             insert_test_usage_log(
                 db,
                 None,
@@ -545,6 +631,8 @@ pub async fn test_entry_latency(
                 status: "failed:invalid_response".to_string(),
                 response_ms: "X".to_string(),
                 score: update_score("X", false),
+                status_code: Some(status.as_u16()),
+                disabled_scope,
                 error_detail: Some(message),
             });
         }
@@ -584,6 +672,8 @@ pub async fn test_entry_latency(
         status: "ok".to_string(),
         response_ms,
         score,
+        status_code: Some(status.as_u16()),
+        disabled_scope: None,
         error_detail: None,
     })
 }

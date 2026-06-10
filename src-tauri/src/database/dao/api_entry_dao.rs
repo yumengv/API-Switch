@@ -318,6 +318,13 @@ impl Database {
         model_meta_en: &str,
         group_name: &str,
     ) -> Result<ApiEntry, AppError> {
+        if let Some(existing) = self.find_entry_by_channel_and_model(channel_id, model)? {
+            self.add_entry_to_group(&existing.id, group_name)?;
+            return self
+                .find_entry_by_channel_and_model(channel_id, model)?
+                .ok_or_else(|| AppError::NotFound(format!("Entry {channel_id}/{model} not found")));
+        }
+
         let conn = lock_conn!(self.conn);
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().timestamp();
@@ -383,6 +390,7 @@ impl Database {
         group_name: &str,
     ) -> Result<ApiEntry, AppError> {
         if let Some(existing) = self.find_entry_by_channel_and_model(channel_id, model)? {
+            self.add_entry_to_group(&existing.id, group_name)?;
             return Ok(existing);
         }
 
@@ -407,6 +415,19 @@ impl Database {
             model_meta_en,
             group_name,
         )
+    }
+
+    pub fn add_entry_to_group(&self, entry_id: &str, group_name: &str) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        let now = chrono::Utc::now().timestamp();
+        let group_name = normalize_group_name(group_name);
+        conn.execute(
+            "INSERT OR IGNORE INTO model_group_entries (group_name, entry_id, sort_index, created_at, updated_at)
+             SELECT ?1, id, sort_index, ?2, ?2 FROM api_entries WHERE id = ?3",
+            rusqlite::params![&group_name, now, entry_id],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
     }
 
     pub fn toggle_entry(&self, id: &str, enabled: bool) -> Result<(), AppError> {
@@ -657,6 +678,12 @@ impl Database {
         catalog_meta: &[ModelCatalogMetaInput],
     ) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
+        let mut selected_models_unique = Vec::new();
+        for model in selected_models {
+            if !selected_models_unique.iter().any(|item| item == model) {
+                selected_models_unique.push(model.clone());
+            }
+        }
 
         let mut stmt = conn.prepare("SELECT model FROM api_entries WHERE channel_id = ?1")?;
         let current_models: Vec<String> = stmt
@@ -674,7 +701,7 @@ impl Database {
             .unwrap_or(-1);
         let mut next_sort = max_sort + 1;
 
-        for model in selected_models {
+        for model in &selected_models_unique {
             let meta = catalog_meta.iter().find(|item| item.model == *model);
             if !current_models.contains(model) {
                 let id = uuid::Uuid::new_v4().to_string();
@@ -733,7 +760,7 @@ impl Database {
         }
 
         for model in &current_models {
-            if !selected_models.contains(model) {
+            if !selected_models_unique.contains(model) {
                 conn.execute(
                     "DELETE FROM model_group_entries
                      WHERE entry_id IN (

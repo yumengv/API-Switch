@@ -431,19 +431,23 @@ export const apiAdapter: ApiAdapter = {
           : webRequest<void>("PUT", `/pool/${id}/display-name`, { display_name }),
     testLatency: async (id, modelScore = 0) => {
       if (useTauri()) {
-        const result = await tauriCmd<{ status: string; response_ms: string; score: number; error_detail?: string }>('test_entry_latency', { entryId: id, modelScore });
+        const result = await tauriCmd<{ status: string; response_ms: string; score: number; status_code?: number; disabled_scope?: string; error_detail?: string }>('test_entry_latency', { entryId: id, modelScore });
         return {
           entry_id: id,
           latency_ms: result.status === 'ok' && result.response_ms !== 'X' ? parseInt(result.response_ms, 10) : null,
           score: result.score,
+          status_code: result.status_code,
+          disabled_scope: result.disabled_scope,
           error_detail: result.error_detail,
         };
       }
-      const result = await webRequest<{ status: string; response_ms: string; score: number; error_detail?: string }>('POST', `/pool/${id}/test-latency`, { model_score: modelScore });
+      const result = await webRequest<{ status: string; response_ms: string; score: number; status_code?: number; disabled_scope?: string; error_detail?: string }>('POST', `/pool/${id}/test-latency`, { model_score: modelScore });
       return {
         entry_id: id,
         latency_ms: result.status === 'ok' && result.response_ms !== 'X' ? parseInt(result.response_ms, 10) : null,
         score: result.score,
+        status_code: result.status_code,
+        disabled_scope: result.disabled_scope,
         error_detail: result.error_detail,
       };
     },

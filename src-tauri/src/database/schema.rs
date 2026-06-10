@@ -114,6 +114,7 @@ pub fn create_tables(conn: &Connection) -> Result<(), AppError> {
     ensure_channel_columns(conn)?;
     ensure_default_model_groups(conn)?;
     ensure_model_group_entries(conn)?;
+    merge_duplicate_api_entries(conn)?;
 
     // Migrate api_type values in channels table
     // custom -> openai, claude -> anthropic
@@ -149,6 +150,13 @@ pub fn create_tables(conn: &Connection) -> Result<(), AppError> {
 
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_usage_logs_channel ON usage_logs(channel_id)",
+        [],
+    )
+    .map_err(|e| AppError::Database(e.to_string()))?;
+
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_api_entries_channel_model_unique
+         ON api_entries(channel_id, model)",
         [],
     )
     .map_err(|e| AppError::Database(e.to_string()))?;
@@ -361,6 +369,67 @@ fn ensure_model_group_entries(conn: &Connection) -> Result<(), AppError> {
         .map_err(|e| AppError::Database(e.to_string()))?;
     }
 
+    Ok(())
+}
+
+fn merge_duplicate_api_entries(conn: &Connection) -> Result<(), AppError> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT channel_id, model
+             FROM api_entries
+             GROUP BY channel_id, model
+             HAVING COUNT(*) > 1",
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    let duplicate_keys = stmt
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .map_err(|e| AppError::Database(e.to_string()))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    drop(stmt);
+
+    if duplicate_keys.is_empty() {
+        return Ok(());
+    }
+
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    let now = chrono::Utc::now().timestamp();
+
+    for (channel_id, model) in duplicate_keys {
+        let ids = {
+            let mut stmt = tx.prepare(
+                "SELECT id
+                 FROM api_entries
+                 WHERE channel_id = ?1 AND model = ?2
+                 ORDER BY enabled DESC, sort_index ASC, created_at ASC",
+            )?;
+            let rows = stmt.query_map(rusqlite::params![channel_id, model], |row| {
+                row.get::<_, String>(0)
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        let Some(primary_id) = ids.first().cloned() else {
+            continue;
+        };
+        for duplicate_id in ids.iter().skip(1) {
+            tx.execute(
+                "INSERT OR IGNORE INTO model_group_entries (group_name, entry_id, sort_index, created_at, updated_at)
+                 SELECT group_name, ?1, sort_index, created_at, ?2
+                 FROM model_group_entries
+                 WHERE entry_id = ?3",
+                rusqlite::params![primary_id, now, duplicate_id],
+            )?;
+            tx.execute(
+                "DELETE FROM model_group_entries WHERE entry_id = ?1",
+                [duplicate_id],
+            )?;
+            tx.execute("DELETE FROM api_entries WHERE id = ?1", [duplicate_id])?;
+        }
+    }
+
+    tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
     Ok(())
 }
 

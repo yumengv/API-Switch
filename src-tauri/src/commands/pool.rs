@@ -13,6 +13,10 @@ pub struct TestResult {
     pub response_ms: String,
     pub score: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_code: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disabled_scope: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error_detail: Option<String>,
 }
 
@@ -229,6 +233,8 @@ pub async fn test_entry_latency(
         status: result.status,
         response_ms: result.response_ms,
         score: result.score,
+        status_code: result.status_code,
+        disabled_scope: result.disabled_scope,
         error_detail: result.error_detail,
     })
 }
