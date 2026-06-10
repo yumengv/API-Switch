@@ -400,6 +400,17 @@ export const apiAdapter: ApiAdapter = {
         ? tauriCmd<void>('update_entry_sort_index', { id, sortIndex })
         : webRequest<void>('PUT', `/pool/${id}/sort-index`, { sort_index: sortIndex }),
 
+    updateSortIndexes: (items) =>
+      useTauri()
+        ? tauriCmd<void>('batch_update_entry_sort_indexes', {
+            params: {
+              items: items.map((item) => ({ id: item.id, sortIndex: item.sortIndex })),
+            },
+          })
+        : webRequest<void>('PUT', '/pool/sort-indexes', {
+            items: items.map((item) => ({ id: item.id, sortIndex: item.sortIndex })),
+          }),
+
     create: (params) =>
       useTauri()
         ? tauriCmd<ApiEntry>('create_entry', { params: { channel_id: params.channelId, model: params.model, display_name: params.displayName, group_name: params.groupName } })

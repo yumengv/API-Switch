@@ -9,6 +9,7 @@ use crate::database::{Channel, Database, ModelInfo};
 use crate::error::AppError;
 use crate::proxy::protocol::get_adapter;
 use crate::services::api_key_utils::primary_api_key;
+use crate::services::response_validation::validate_chat_response_body;
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
@@ -1332,7 +1333,7 @@ pub async fn test_channel_chat(
     let adapter = get_adapter(api_type);
     let chat_url = adapter.build_chat_url(base_url, model);
 
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "model": model,
         "messages": [
             {"role": "user", "content": "璇峰彧鍥炲 OK"}
@@ -1340,6 +1341,7 @@ pub async fn test_channel_chat(
         "max_tokens": 10,
         "temperature": 0.0
     });
+    adapter.transform_request(&mut body, model);
 
     let req = adapter.apply_auth(
         client
@@ -1353,7 +1355,7 @@ pub async fn test_channel_chat(
             let status_code = resp.status().as_u16();
             let latency = start.elapsed().as_millis() as u64;
 
-            if status_code != 200 {
+            if !resp.status().is_success() {
                 return TestChannelResult {
                     success: false,
                     latency_ms: latency,
@@ -1362,11 +1364,27 @@ pub async fn test_channel_chat(
                 };
             }
 
-            TestChannelResult {
-                success: true,
-                latency_ms: latency,
-                status_code: Some(status_code),
-                message: "OK".to_string(),
+            match resp.text().await {
+                Ok(body) => match validate_chat_response_body(adapter.as_ref(), &body) {
+                    Ok(_) => TestChannelResult {
+                        success: true,
+                        latency_ms: latency,
+                        status_code: Some(status_code),
+                        message: "OK".to_string(),
+                    },
+                    Err(message) => TestChannelResult {
+                        success: false,
+                        latency_ms: latency,
+                        status_code: Some(status_code),
+                        message,
+                    },
+                },
+                Err(e) => TestChannelResult {
+                    success: false,
+                    latency_ms: latency,
+                    status_code: Some(status_code),
+                    message: format!("Failed to read response: {}", e),
+                },
             }
         }
         Err(e) => {

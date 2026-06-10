@@ -188,6 +188,7 @@ fn run_gui(runtime_mode: RuntimeMode) {
             commands::pool::batch_toggle_entries,
             commands::pool::reorder_entries,
             commands::pool::update_entry_sort_index,
+            commands::pool::batch_update_entry_sort_indexes,
             commands::pool::delete_entry,
             commands::pool::create_entry,
             commands::pool::backfill_entry_catalog_meta,

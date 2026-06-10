@@ -8,7 +8,7 @@ use crate::database::{ApiEntry, ModelGroupConfig};
 use crate::error::AppError;
 use crate::services::pool_service::{
     self, CatalogMetaUpdate, CreateEntryParams, ReplaceModelGroupEntriesParams, TestLatencyResult,
-    UpsertModelGroupParams,
+    SortIndexUpdate, UpsertModelGroupParams,
 };
 
 use super::ServerApi;
@@ -79,6 +79,18 @@ impl ServerApi {
     /// 更新单个入口的自定义排序值。
     pub fn update_entry_sort_index(&self, id: &str, sort_index: i32) -> Result<(), AppError> {
         let result = pool_service::update_entry_sort_index(&self.state().db, id, sort_index);
+        if result.is_ok() {
+            crate::event::emit(self.app(), "entries-changed");
+        }
+        result
+    }
+
+    /// 批量更新入口排序值。
+    pub fn batch_update_entry_sort_indexes(
+        &self,
+        items: &[SortIndexUpdate],
+    ) -> Result<(), AppError> {
+        let result = pool_service::batch_update_entry_sort_indexes(&self.state().db, items);
         if result.is_ok() {
             crate::event::emit(self.app(), "entries-changed");
         }

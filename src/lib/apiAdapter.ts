@@ -30,6 +30,7 @@ export interface ApiAdapter {
     batchToggle(ids: string[], enabled: boolean): Promise<void>;
     reorder(orderedIds: string[]): Promise<void>;
     updateSortIndex(id: string, sortIndex: number): Promise<void>;
+    updateSortIndexes(items: { id: string; sortIndex: number }[]): Promise<void>;
     create(params: { channelId: string; model: string; displayName?: string; groupName?: string }): Promise<ApiEntry>;
     delete(id: string): Promise<void>;
     testLatency(id: string, modelScore?: number): Promise<{ entry_id: string; latency_ms: number | null; score: number; error_detail?: string }>;

@@ -153,6 +153,87 @@ function calculateModelRawScore(entry: ApiEntry): number {
   return releaseRawScore(entry.release_date) * 0.4 + tierRawScore(entry) * 0.4 + descriptionRawScore(entry) * 0.2;
 }
 
+const POOL_TEST_CONCURRENCY = 12;
+
+type PoolTestOutcome = {
+  entry: ApiEntry;
+  success: boolean;
+  latencyMs: number | null;
+  modelScore: number;
+  errorDetail?: string;
+};
+
+async function runConcurrent<T>(
+  items: T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<void>,
+) {
+  let nextIndex = 0;
+  const workerCount = Math.min(Math.max(1, limit), items.length);
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      await worker(items[index], index);
+    }
+  }));
+}
+
+function modelSortName(entry: ApiEntry) {
+  return (entry.display_name || entry.model).trim().toLowerCase();
+}
+
+function modelPrefix(entry: ApiEntry) {
+  const raw = modelSortName(entry).split("/").pop() || modelSortName(entry);
+  const known = [
+    "claude",
+    "deepseek",
+    "doubao",
+    "gemini",
+    "glm",
+    "gpt",
+    "grok",
+    "hunyuan",
+    "kimi",
+    "llama",
+    "mistral",
+    "moonshot",
+    "o",
+    "qwen",
+  ];
+  const normalized = raw.replace(/^models\//, "");
+  const knownPrefix = known.find((prefix) => normalized === prefix || normalized.startsWith(`${prefix}-`));
+  if (knownPrefix) return knownPrefix;
+  return normalized.match(/^[a-z]+/)?.[0] || normalized;
+}
+
+function compareTestedModels(a: PoolTestOutcome, b: PoolTestOutcome) {
+  const prefixCompare = modelPrefix(a.entry).localeCompare(modelPrefix(b.entry), "en", { numeric: true });
+  if (prefixCompare !== 0) return prefixCompare;
+
+  const releaseA = parseReleaseDateForSort(a.entry) ?? 0;
+  const releaseB = parseReleaseDateForSort(b.entry) ?? 0;
+  if (releaseA !== releaseB) return releaseB - releaseA;
+
+  if (a.modelScore !== b.modelScore) return b.modelScore - a.modelScore;
+
+  const latencyA = a.latencyMs ?? parseResponseMs(a.entry.response_ms) ?? Number.POSITIVE_INFINITY;
+  const latencyB = b.latencyMs ?? parseResponseMs(b.entry.response_ms) ?? Number.POSITIVE_INFINITY;
+  if (latencyA !== latencyB) return latencyA - latencyB;
+
+  return modelSortName(a.entry).localeCompare(modelSortName(b.entry), "en", { numeric: true });
+}
+
+function buildPostTestOrder(outcomes: PoolTestOutcome[]) {
+  const success = outcomes.filter((item) => item.success).sort(compareTestedModels);
+  const failed = outcomes.filter((item) => !item.success).sort(compareTestedModels);
+  return [...success, ...failed];
+}
+
+function priorityToSortIndex(priority: number) {
+  return 100 - Math.round(priority);
+}
+
 type CatalogDisplayMeta = {
   logo: string;
   releaseDate: string;
@@ -904,6 +985,8 @@ const handleToggleIntent = useCallback(async (entry: ApiEntry, enabled: boolean,
       page: 1,
       pageSize: 100,
       groupName: groupFilter !== "all" ? groupFilter : undefined,
+      channelId: filterChannel !== "all" ? filterChannel : undefined,
+      search: debouncedFilter.trim() || undefined,
     }) as PaginatedResult<ApiEntry>;
     const scopedEntries = [...firstPage.items];
     const totalPages = Math.ceil(firstPage.total / firstPage.page_size);
@@ -912,68 +995,96 @@ const handleToggleIntent = useCallback(async (entry: ApiEntry, enabled: boolean,
         page,
         pageSize: firstPage.page_size,
         groupName: groupFilter !== "all" ? groupFilter : undefined,
+        channelId: filterChannel !== "all" ? filterChannel : undefined,
+        search: debouncedFilter.trim() || undefined,
       }) as PaginatedResult<ApiEntry>;
       scopedEntries.push(...nextPage.items);
     }
     if (!scopedEntries.length) return;
     const results: Record<string, string> = {};
     const errorDetails: Record<string, string> = {};
+    const outcomes: PoolTestOutcome[] = [];
     const modelScoreCache = new Map<string, number>();
     let completed = 0;
     const total = scopedEntries.length;
     setTestProgress({ current: 0, total });
-    const grouped = new Map<string, ApiEntry[]>();
-    for (const entry of scopedEntries) {
-      const list = grouped.get(entry.channel_id) || [];
-      list.push(entry);
-      grouped.set(entry.channel_id, list);
-    }
-    const testChannel = async (channelEntries: ApiEntry[]) => {
-      for (const entry of channelEntries) {
+    setTestingEntryIds(new Set());
+
+    await runConcurrent(scopedEntries, POOL_TEST_CONCURRENCY, async (entry) => {
+      setTestingEntryIds((prev) => {
+        const next = new Set(prev);
+        next.add(entry.id);
+        return next;
+      });
+      const cacheKey = getModelScoreCacheKey(entry);
+      let modelScore = modelScoreCache.get(cacheKey);
+      if (modelScore === undefined) {
+        modelScore = calculateModelRawScore(entry);
+        modelScoreCache.set(cacheKey, modelScore);
+      }
+      try {
+        const result = await adapter.pool.testLatency(entry.id, modelScore);
+        const success = result.latency_ms !== null;
+        if (success) {
+          results[entry.id] = result.latency_ms!.toString();
+        } else {
+          results[entry.id] = "X";
+          if (result.error_detail) {
+            errorDetails[entry.id] = result.error_detail;
+          }
+        }
+        outcomes.push({
+          entry,
+          success,
+          latencyMs: result.latency_ms,
+          modelScore,
+          errorDetail: result.error_detail,
+        });
+      } catch (err) {
+        results[entry.id] = "X";
+        const errMsg = err instanceof Error ? err.message : String(err);
+        errorDetails[entry.id] = `exception: ${errMsg}`;
+        outcomes.push({
+          entry,
+          success: false,
+          latencyMs: null,
+          modelScore,
+          errorDetail: errMsg,
+        });
+      } finally {
+        completed++;
         setTestingEntryIds((prev) => {
           const next = new Set(prev);
-          for (const e of channelEntries) next.delete(e.id);
-          next.add(entry.id);
+          next.delete(entry.id);
           return next;
         });
-        try {
-          const cacheKey = getModelScoreCacheKey(entry);
-          let modelScore = modelScoreCache.get(cacheKey);
-          if (modelScore === undefined) {
-            modelScore = calculateModelRawScore(entry);
-            modelScoreCache.set(cacheKey, modelScore);
-          }
-          const result = await adapter.pool.testLatency(entry.id, modelScore);
-
-          if (result.latency_ms !== null) {
-            results[entry.id] = result.latency_ms.toString();
-          } else {
-            results[entry.id] = "X";
-            // 保存错误详情供前端展示
-            if (result.error_detail) {
-              errorDetails[entry.id] = result.error_detail;
-            }
-            await adapter.pool.toggle(entry.id, false);
-          }
-        } catch (err) {
-          results[entry.id] = "X";
-          const errMsg = err instanceof Error ? err.message : String(err);
-          errorDetails[entry.id] = `exception: ${errMsg}`;
-        }
-        completed++;
         setTestProgress({ current: completed, total });
         setTestResults({ ...results });
         setTestErrorDetails({ ...errorDetails });
-
       }
-    };
-    await Promise.all([...grouped.values()].map(testChannel));
+    });
+
+    const orderedOutcomes = buildPostTestOrder(outcomes);
+    const successCount = orderedOutcomes.filter((item) => item.success).length;
+    await adapter.pool.updateSortIndexes(
+      orderedOutcomes.map((item, index) => {
+        const priority = item.success ? successCount - index : -(index - successCount + 1);
+        return { id: item.entry.id, sortIndex: priorityToSortIndex(priority) };
+      })
+    );
+
     setTestingEntryIds(new Set());
     setTestResults({});
     setTestErrorDetails({});
     setTestProgress(null);
-    await queryClient.invalidateQueries({ queryKey: entriesQueryKey });
-  }, [adapter.pool, entriesQueryKey, groupFilter, queryClient, testProgress]);
+    setLocalOrder(null);
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: entriesQueryKey }),
+      queryClient.invalidateQueries({ queryKey: ["entries"] }),
+      queryClient.invalidateQueries({ queryKey: ["groups"] }),
+      queryClient.invalidateQueries({ queryKey: ["model-groups"] }),
+    ]);
+  }, [adapter.pool, debouncedFilter, entriesQueryKey, filterChannel, groupFilter, queryClient, testProgress]);
 
 
   return (

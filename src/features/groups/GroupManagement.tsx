@@ -53,7 +53,10 @@ function parsePriorityDraft(value: string | undefined, fallback: number) {
 
 function sortEntriesForDialog(entries: ApiEntry[]) {
   return [...entries].sort((a, b) => {
-    return a.sort_index - b.sort_index;
+    const priorityA = priorityFromSortIndex(a.sort_index);
+    const priorityB = priorityFromSortIndex(b.sort_index);
+    if (priorityA !== priorityB) return priorityB - priorityA;
+    return getEntryLabel(a).localeCompare(getEntryLabel(b), "zh-CN", { numeric: true });
   });
 }
 
@@ -411,7 +414,7 @@ function ModelSelectionDialog({
           const priorityA = parsePriorityDraft(priorityDrafts[a.id], priorityFromSortIndex(a.sort_index));
           const priorityB = parsePriorityDraft(priorityDrafts[b.id], priorityFromSortIndex(b.sort_index));
           if (priorityA !== priorityB) return priorityB - priorityA;
-          return a.sort_index - b.sort_index;
+          return getEntryLabel(a).localeCompare(getEntryLabel(b), "zh-CN", { numeric: true });
         }),
     [entries, priorityDrafts, selectedIds]
   );
@@ -419,15 +422,15 @@ function ModelSelectionDialog({
   const saveMutation = useMutation({
     mutationFn: async () => {
       if (!group) return Promise.resolve();
-      const selectedEntryList = entries.filter((entry) => selectedIds.has(entry.id));
+      const selectedEntryList = [...selectedEntries];
       await adapter.pool.replaceModelGroupEntries(group.name, selectedEntryList.map((entry) => entry.id));
-      await Promise.all(
+      await adapter.pool.updateSortIndexes(
         selectedEntryList.map((entry) => {
           const priority = parsePriorityDraft(
             priorityDrafts[entry.id],
             priorityFromSortIndex(entry.sort_index)
           );
-          return adapter.pool.updateSortIndex(entry.id, sortIndexFromPriority(priority));
+          return { id: entry.id, sortIndex: sortIndexFromPriority(priority) };
         })
       );
     },
@@ -500,7 +503,8 @@ function ModelSelectionDialog({
                     className="h-8 text-center text-xs"
                     type="number"
                     step={1}
-                    title="排序数字，越大越靠前"
+                    aria-label={`${getEntryLabel(entry)} 排序数字`}
+                    title="排序数字，越大越靠前；失败模型应为负数"
                     value={priorityDrafts[entry.id] ?? String(priorityFromSortIndex(entry.sort_index))}
                     onChange={(event) => updatePriorityDraft(entry.id, event.target.value)}
                   />

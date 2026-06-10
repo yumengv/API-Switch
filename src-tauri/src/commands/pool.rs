@@ -66,6 +66,11 @@ pub struct ReplaceModelGroupEntriesParams {
     pub entry_ids: Vec<String>,
 }
 
+#[derive(Deserialize)]
+pub struct BatchSortIndexParams {
+    pub items: Vec<pool_service::SortIndexUpdate>,
+}
+
 fn default_group_enabled() -> bool {
     true
 }
@@ -158,6 +163,16 @@ pub async fn update_entry_sort_index(
 ) -> Result<(), AppError> {
     let api = ServerApi::new(state.inner().clone(), app);
     api.update_entry_sort_index(&id, sort_index)
+}
+
+#[tauri::command]
+pub async fn batch_update_entry_sort_indexes(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    params: BatchSortIndexParams,
+) -> Result<(), AppError> {
+    let api = ServerApi::new(state.inner().clone(), app);
+    api.batch_update_entry_sort_indexes(&params.items)
 }
 
 #[tauri::command]

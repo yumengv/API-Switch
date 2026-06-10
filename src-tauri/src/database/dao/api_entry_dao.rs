@@ -120,6 +120,34 @@ fn normalize_group_name(name: &str) -> String {
     }
 }
 
+fn sync_model_group_sort_indexes(
+    conn: &rusqlite::Connection,
+    entry_id: Option<&str>,
+    now: i64,
+) -> rusqlite::Result<()> {
+    match entry_id {
+        Some(id) => {
+            conn.execute(
+                "UPDATE model_group_entries
+                 SET sort_index = (SELECT sort_index FROM api_entries WHERE id = ?1),
+                     updated_at = ?2
+                 WHERE entry_id = ?1",
+                rusqlite::params![id, now],
+            )?;
+        }
+        None => {
+            conn.execute(
+                "UPDATE model_group_entries
+                 SET sort_index = COALESCE((SELECT sort_index FROM api_entries WHERE id = entry_id), sort_index),
+                     updated_at = ?1
+                 WHERE entry_id IN (SELECT id FROM api_entries)",
+                rusqlite::params![now],
+            )?;
+        }
+    }
+    Ok(())
+}
+
 fn row_to_entry(row: &rusqlite::Row<'_>, include_channel: bool) -> rusqlite::Result<ApiEntry> {
     let enabled: i32 = row.get(5)?;
     let response_ms: String = row.get(11).unwrap_or_default();
@@ -408,15 +436,16 @@ impl Database {
     /// Set a single entry's sort_index to 0 and shift others down to keep relative order.
     pub fn set_entry_priority(&self, entry_id: &str, sort_index: i32) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
-        conn.execute(
-            "UPDATE api_entries SET sort_index = sort_index + 1, updated_at = (SELECT strftime('%s','now')) WHERE id != ?1",
-            rusqlite::params![entry_id],
-        )?;
         let now = chrono::Utc::now().timestamp();
+        conn.execute(
+            "UPDATE api_entries SET sort_index = sort_index + 1, updated_at = ?2 WHERE id != ?1",
+            rusqlite::params![entry_id, now],
+        )?;
         conn.execute(
             "UPDATE api_entries SET sort_index = ?1, updated_at = ?2 WHERE id = ?3",
             rusqlite::params![sort_index, now, entry_id],
         )?;
+        sync_model_group_sort_indexes(&conn, None, now)?;
         Ok(())
     }
 
@@ -429,6 +458,37 @@ impl Database {
                 rusqlite::params![i as i32, now, id],
             )?;
         }
+        sync_model_group_sort_indexes(&conn, None, now)?;
+        Ok(())
+    }
+
+    pub fn batch_update_entry_sort_indexes(
+        &self,
+        items: &[(String, i32)],
+    ) -> Result<(), AppError> {
+        if items.is_empty() {
+            return Ok(());
+        }
+
+        let mut conn = lock_conn!(self.conn);
+        let tx = conn.transaction()?;
+        let now = chrono::Utc::now().timestamp();
+        {
+            let mut stmt = tx.prepare(
+                "UPDATE api_entries SET sort_index = ?1, updated_at = ?2 WHERE id = ?3",
+            )?;
+            for (id, sort_index) in items {
+                stmt.execute(rusqlite::params![sort_index, now, id])?;
+            }
+        }
+        tx.execute(
+            "UPDATE model_group_entries
+             SET sort_index = COALESCE((SELECT sort_index FROM api_entries WHERE id = entry_id), sort_index),
+                 updated_at = ?1
+             WHERE entry_id IN (SELECT id FROM api_entries)",
+            rusqlite::params![now],
+        )?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -480,11 +540,14 @@ impl Database {
 
     pub fn update_entry_sort_index(&self, id: &str, sort_index: i32) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
+        let now = chrono::Utc::now().timestamp();
         conn.execute(
             "UPDATE api_entries SET sort_index = ?1, updated_at = ?2 WHERE id = ?3",
-            rusqlite::params![sort_index, chrono::Utc::now().timestamp(), id],
+            rusqlite::params![sort_index, now, id],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
+        sync_model_group_sort_indexes(&conn, Some(id), now)
+            .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(())
     }
 
@@ -1117,7 +1180,9 @@ impl Database {
     pub fn list_model_group_entry_ids(&self, name: &str) -> Result<Vec<String>, AppError> {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn.prepare(
-            "SELECT entry_id FROM model_group_entries WHERE LOWER(group_name) = LOWER(?1)",
+            "SELECT entry_id FROM model_group_entries
+             WHERE LOWER(group_name) = LOWER(?1)
+             ORDER BY sort_index, created_at",
         )?;
         let ids = stmt
             .query_map([name.trim()], |row| row.get::<_, String>(0))?

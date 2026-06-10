@@ -51,6 +51,11 @@ pub struct SortIndexParams {
 }
 
 #[derive(Deserialize)]
+pub struct BatchSortIndexParams {
+    pub items: Vec<pool_service::SortIndexUpdate>,
+}
+
+#[derive(Deserialize)]
 pub struct TestLatencyParams {
     #[serde(default)]
     pub model_score: f64,
@@ -181,6 +186,17 @@ pub async fn update_sort_index(
     state
         .server_api()?
         .update_entry_sort_index(&id, payload.sort_index)?;
+    Ok(Json(serde_json::json!({"ok": true})))
+}
+
+/// PUT /admin/pool/sort-indexes - Batch update entry sort indexes
+pub async fn batch_update_sort_indexes(
+    State(state): State<AdminState>,
+    Json(payload): Json<BatchSortIndexParams>,
+) -> Result<Json<serde_json::Value>, AdminError> {
+    state
+        .server_api()?
+        .batch_update_entry_sort_indexes(&payload.items)?;
     Ok(Json(serde_json::json!({"ok": true})))
 }
 

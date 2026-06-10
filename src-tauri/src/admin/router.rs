@@ -95,6 +95,10 @@ pub fn build_admin_router(state: AdminState) -> Router {
         .route("/admin/pool/:id", delete(pool_handlers::delete))
         .route("/admin/pool/reorder", post(pool_handlers::reorder))
         .route(
+            "/admin/pool/sort-indexes",
+            put(pool_handlers::batch_update_sort_indexes),
+        )
+        .route(
             "/admin/pool/:id/sort-index",
             put(pool_handlers::update_sort_index),
         )
