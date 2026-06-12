@@ -477,10 +477,7 @@ return (
       }
       onOpenChange(value);
     }}>
-      <DialogContent className={cn(
-        "flex max-h-[calc(100dvh-1rem)] flex-col overflow-hidden sm:max-h-[calc(100dvh-2rem)]",
-        showModels ? "sm:max-w-3xl" : "sm:max-w-[500px]"
-      )}>
+      <DialogContent className="flex max-h-[calc(100dvh-1rem)] flex-col overflow-hidden sm:max-w-[600px] sm:max-h-[calc(100dvh-2rem)]">
         <DialogHeader>
           <DialogTitle>{channel ? t('channel.editor.editTitle') : t('channel.editor.title')}</DialogTitle>
         </DialogHeader>

@@ -106,7 +106,7 @@ mod tests {
 
     #[test]
     fn server_api_requires_runtime_state() {
-        let state = test_admin_state(None, Some(crate::AppEventHandle));
+        let state = test_admin_state(None, None);
 
         let err = match state.server_api() {
             Ok(_) => panic!("missing runtime should fail"),
